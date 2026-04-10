@@ -1,0 +1,177 @@
+/* App-specific styles */
+
+/* Section container utilities */
+.section-container {
+  @apply w-full px-4 sm:px-6 lg:px-8 xl:px-12;
+}
+
+.section-inner {
+  @apply max-w-7xl mx-auto;
+}
+
+/* Custom scrollbar for slide lists */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #f3f3f3;
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #3898ec;
+}
+
+/* Slide preview aspect ratio */
+.slide-preview {
+  aspect-ratio: 16 / 9;
+}
+
+/* Animation utilities */
+@keyframes slideInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.animate-slide-in-up {
+  animation: slideInUp 0.5s ease-out forwards;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+/* Button hover effects */
+.btn-primary {
+  @apply bg-[#3898ec] text-white transition-all duration-300;
+}
+
+.btn-primary:hover {
+  @apply bg-[#0082f3] shadow-lg;
+  transform: translateY(-1px);
+}
+
+.btn-primary:active {
+  transform: translateY(0);
+}
+
+/* Card hover effects */
+.card-hover {
+  @apply transition-all duration-300;
+}
+
+.card-hover:hover {
+  @apply shadow-lg;
+  transform: translateY(-2px);
+}
+
+/* Input focus styles */
+.input-focus {
+  @apply transition-all duration-300;
+}
+
+.input-focus:focus {
+  @apply ring-2 ring-[#3898ec]/20 border-[#3898ec];
+}
+
+/* Loading spinner */
+.spinner {
+  @apply animate-spin;
+}
+
+/* Toast notification styles */
+.toast {
+  @apply fixed bottom-4 right-4 px-6 py-3 rounded-lg shadow-lg transition-all duration-300;
+}
+
+.toast-success {
+  @apply bg-green-500 text-white;
+}
+
+.toast-error {
+  @apply bg-red-500 text-white;
+}
+
+.toast-info {
+  @apply bg-[#3898ec] text-white;
+}
+
+/* Modal overlay */
+.modal-overlay {
+  @apply fixed inset-0 bg-black/50 backdrop-blur-sm z-50;
+}
+
+/* Progress bar animation */
+.progress-bar {
+  @apply h-2 bg-gray-200 rounded-full overflow-hidden;
+}
+
+.progress-bar-fill {
+  @apply h-full bg-[#3898ec] transition-all duration-300;
+}
+
+/* Tooltip styles */
+.tooltip {
+  @apply relative;
+}
+
+.tooltip::after {
+  content: attr(data-tooltip);
+  @apply absolute bottom-full left-1/2 -translate-x-1/2 px-3 py-1.5 bg-[#1f1f1f] text-white text-xs rounded-lg whitespace-nowrap opacity-0 pointer-events-none transition-opacity duration-200;
+}
+
+.tooltip:hover::after {
+  @apply opacity-100;
+}
+
+/* Responsive typography */
+@media (max-width: 640px) {
+  .hero-title {
+    @apply text-3xl;
+  }
+  
+  .section-title {
+    @apply text-2xl;
+  }
+}
+
+/* Print styles */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  
+  .print-only {
+    display: block !important;
+  }
+}

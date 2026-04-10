@@ -1,0 +1,256 @@
+import { useState } from 'react';
+import { ArrowRight, ArrowLeft, Loader2, Edit2, RefreshCw } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import type { SlideData } from '../App';
+
+interface ContentSectionProps {
+  slides: SlideData[];
+  onConfirm: (slides: SlideData[]) => void;
+  onBack: () => void;
+}
+
+const ContentSection = ({ slides: initialSlides, onConfirm, onBack }: ContentSectionProps) => {
+  const [slides, setSlides] = useState<SlideData[]>(initialSlides);
+  const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
+  const [editingContent, setEditingContent] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
+
+  const currentSlide = slides[currentSlideIndex];
+
+  const handleRegenerateContent = async () => {
+    setIsLoading(true);
+    // Simulate API call
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    
+    // Mock regenerated content
+    const newContent = currentSlide.content.map((item) => 
+      `${item}（已重新生成版本 ${Math.floor(Math.random() * 100)}）`
+    );
+    
+    const updatedSlides = [...slides];
+    updatedSlides[currentSlideIndex] = {
+      ...currentSlide,
+      content: newContent,
+    };
+    setSlides(updatedSlides);
+    setIsLoading(false);
+  };
+
+  const handleEditStart = (content: string) => {
+    setEditingContent(content);
+    setEditValue(content);
+  };
+
+  const handleEditSave = () => {
+    if (editingContent !== null) {
+      const updatedSlides = [...slides];
+      updatedSlides[currentSlideIndex] = {
+        ...currentSlide,
+        content: currentSlide.content.map(c => 
+          c === editingContent ? editValue : c
+        ),
+      };
+      setSlides(updatedSlides);
+      setEditingContent(null);
+    }
+  };
+
+  const handleEditCancel = () => {
+    setEditingContent(null);
+    setEditValue('');
+  };
+
+  const handleConfirm = () => {
+    onConfirm(slides);
+  };
+
+  return (
+    <section className="min-h-screen pt-24 pb-16 bg-[#f3f3f3]">
+      <div className="section-container">
+        <div className="section-inner max-w-6xl">
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+            <div>
+              <h1 className="text-2xl sm:text-3xl font-bold text-[#1f1f1f] mb-2">
+                内容编辑
+              </h1>
+              <p className="text-[#1f1f1f]/60">
+                第 {currentSlideIndex + 1} / {slides.length} 页：{currentSlide.title}
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <Button
+                variant="outline"
+                onClick={onBack}
+                className="border-gray-200 text-[#1f1f1f]"
+              >
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                返回
+              </Button>
+              <Button
+                onClick={handleConfirm}
+                className="bg-[#3898ec] hover:bg-[#0082f3] text-white"
+              >
+                完成编辑
+                <ArrowRight className="w-4 h-4 ml-2" />
+              </Button>
+            </div>
+          </div>
+
+          {/* Progress Bar */}
+          <div className="flex gap-1 mb-8">
+            {slides.map((_, index) => (
+              <button
+                key={index}
+                onClick={() => setCurrentSlideIndex(index)}
+                className={`flex-1 h-2 rounded-full transition-all duration-300 ${
+                  index === currentSlideIndex
+                    ? 'bg-[#3898ec]'
+                    : index < currentSlideIndex
+                    ? 'bg-[#3898ec]/50'
+                    : 'bg-gray-200'
+                }`}
+              />
+            ))}
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Slide Navigator */}
+            <div className="lg:col-span-1 space-y-2">
+              {slides.map((slide, index) => (
+                <button
+                  key={slide.id}
+                  onClick={() => setCurrentSlideIndex(index)}
+                  className={`w-full text-left p-4 rounded-xl transition-all duration-300 ${
+                    index === currentSlideIndex
+                      ? 'bg-[#3898ec] text-white shadow-lg'
+                      : 'bg-white hover:bg-gray-50 text-[#1f1f1f]'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium ${
+                      index === currentSlideIndex
+                        ? 'bg-white text-[#3898ec]'
+                        : 'bg-[#3898ec]/10 text-[#3898ec]'
+                    }`}>
+                      {index + 1}
+                    </span>
+                    <span className="font-medium truncate">{slide.title}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            {/* Content Editor */}
+            <div className="lg:col-span-2">
+              <div className="bg-white rounded-2xl shadow-lg p-6">
+                {/* Slide Header */}
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="text-xl font-bold text-[#1f1f1f]">{currentSlide.title}</h2>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleRegenerateContent}
+                    disabled={isLoading}
+                    className="text-[#3898ec] border-[#3898ec]/30 hover:bg-[#3898ec]/10"
+                  >
+                    {isLoading ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-4 h-4 mr-2" />
+                    )}
+                    重新生成
+                  </Button>
+                </div>
+
+                {/* Content Items */}
+                <div className="space-y-4">
+                  {currentSlide.content.map((content, index) => (
+                    <div
+                      key={index}
+                      className="border border-gray-200 rounded-xl p-4 hover:border-[#3898ec]/30 transition-colors"
+                    >
+                      {editingContent === content ? (
+                        <div className="space-y-3">
+                          <Textarea
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            className="min-h-[100px] resize-none"
+                            autoFocus
+                          />
+                          <div className="flex justify-end gap-2">
+                            <button
+                              onClick={handleEditCancel}
+                              className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                            >
+                              取消
+                            </button>
+                            <button
+                              onClick={handleEditSave}
+                              className="px-3 py-1.5 text-sm bg-[#3898ec] text-white hover:bg-[#0082f3] rounded-lg transition-colors"
+                            >
+                              保存
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1">
+                            <span className="inline-block w-6 h-6 bg-[#3898ec]/10 text-[#3898ec] rounded-full text-xs font-medium flex items-center justify-center mb-2">
+                              {index + 1}
+                            </span>
+                            <p className="text-[#1f1f1f] leading-relaxed">{content}</p>
+                          </div>
+                          <button
+                            onClick={() => handleEditStart(content)}
+                            className="p-2 hover:bg-gray-100 rounded-lg text-[#1f1f1f]/40 hover:text-[#3898ec] transition-colors"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Speaker Notes */}
+                <div className="mt-6 pt-6 border-t border-gray-200">
+                  <h4 className="text-sm font-medium text-[#1f1f1f]/60 mb-3">演讲备注</h4>
+                  <div className="bg-[#f3f3f3] rounded-lg p-4">
+                    <p className="text-sm text-[#1f1f1f]/70">{currentSlide.notes}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Navigation Buttons */}
+              <div className="flex justify-between mt-6">
+                <Button
+                  variant="outline"
+                  onClick={() => setCurrentSlideIndex(Math.max(0, currentSlideIndex - 1))}
+                  disabled={currentSlideIndex === 0}
+                  className="border-gray-200 text-[#1f1f1f]"
+                >
+                  <ArrowLeft className="w-4 h-4 mr-2" />
+                  上一页
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => setCurrentSlideIndex(Math.min(slides.length - 1, currentSlideIndex + 1))}
+                  disabled={currentSlideIndex === slides.length - 1}
+                  className="border-gray-200 text-[#1f1f1f]"
+                >
+                  下一页
+                  <ArrowRight className="w-4 h-4 ml-2" />
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+};
+
+export default ContentSection;
