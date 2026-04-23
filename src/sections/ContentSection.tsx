@@ -6,7 +6,7 @@ import type { SlideData } from '../App';
 
 interface ContentSectionProps {
   slides: SlideData[];
-  onConfirm: (slides: SlideData[]) => void;
+  onConfirm: (slides: SlideData[]) => Promise<void>;
   onBack: () => void;
 }
 
@@ -14,6 +14,7 @@ const ContentSection = ({ slides: initialSlides, onConfirm, onBack }: ContentSec
   const [slides, setSlides] = useState<SlideData[]>(initialSlides);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
+  const [statusMessage, setStatusMessage] = useState('');
   const [editingContent, setEditingContent] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
 
@@ -21,21 +22,26 @@ const ContentSection = ({ slides: initialSlides, onConfirm, onBack }: ContentSec
 
   const handleRegenerateContent = async () => {
     setIsLoading(true);
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    // Mock regenerated content
-    const newContent = currentSlide.content.map((item) => 
-      `${item}（已重新生成版本 ${Math.floor(Math.random() * 100)}）`
-    );
-    
-    const updatedSlides = [...slides];
-    updatedSlides[currentSlideIndex] = {
-      ...currentSlide,
-      content: newContent,
-    };
-    setSlides(updatedSlides);
-    setIsLoading(false);
+    setStatusMessage('AI 正在全力重新生成本页内容，请稍候...');
+    try {
+      // Simulate API call
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
+      // Mock regenerated content
+      const newContent = currentSlide.content.map((item) => 
+        `${item}（已重新生成版本 ${Math.floor(Math.random() * 100)}）`
+      );
+      
+      const updatedSlides = [...slides];
+      updatedSlides[currentSlideIndex] = {
+        ...currentSlide,
+        content: newContent,
+      };
+      setSlides(updatedSlides);
+    } finally {
+      setIsLoading(false);
+      setStatusMessage('');
+    }
   };
 
   const handleEditStart = (content: string) => {
@@ -62,8 +68,13 @@ const ContentSection = ({ slides: initialSlides, onConfirm, onBack }: ContentSec
     setEditValue('');
   };
 
-  const handleConfirm = () => {
-    onConfirm(slides);
+  const handleConfirm = async () => {
+    setStatusMessage('正在保存编辑并准备进入预览...');
+    try {
+      await onConfirm(slides);
+    } finally {
+      setStatusMessage('');
+    }
   };
 
   return (
@@ -91,13 +102,29 @@ const ContentSection = ({ slides: initialSlides, onConfirm, onBack }: ContentSec
               </Button>
               <Button
                 onClick={handleConfirm}
-                className="bg-[#3898ec] hover:bg-[#0082f3] text-white"
+                disabled={isLoading}
+                className="bg-[#3898ec] hover:bg-[#0082f3] text-white disabled:opacity-60"
               >
-                完成编辑
-                <ArrowRight className="w-4 h-4 ml-2" />
+                {isLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    正在保存...
+                  </>
+                ) : (
+                  <>
+                    完成编辑
+                    <ArrowRight className="w-4 h-4 ml-2" />
+                  </>
+                )}
               </Button>
             </div>
           </div>
+
+          {statusMessage && (
+            <div className="mb-6 rounded-2xl border border-[#3898ec]/20 bg-[#3898ec]/10 p-4 text-sm text-[#1f1f1f]">
+              {statusMessage}
+            </div>
+          )}
 
           {/* Progress Bar */}
           <div className="flex gap-1 mb-8">
@@ -161,7 +188,7 @@ const ContentSection = ({ slides: initialSlides, onConfirm, onBack }: ContentSec
                     ) : (
                       <RefreshCw className="w-4 h-4 mr-2" />
                     )}
-                    重新生成
+                    {isLoading ? '正在全力重生...' : '重新生成'}
                   </Button>
                 </div>
 

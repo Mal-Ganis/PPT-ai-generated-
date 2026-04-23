@@ -7,6 +7,7 @@ import OutlineSection from './sections/OutlineSection';
 import ContentSection from './sections/ContentSection';
 import PreviewSection from './sections/PreviewSection';
 import Footer from './sections/Footer';
+import { generateOutline, generateSlideContent } from './lib/api';
 
 export type AppStep = 'home' | 'input' | 'outline' | 'content' | 'preview';
 
@@ -32,40 +33,43 @@ function App() {
     setCurrentStep('input');
   };
 
-  const handleInputSubmit = (type: 'topic' | 'document', content: string) => {
+  const handleInputSubmit = async (type: 'topic' | 'document', content: string) => {
     setInputData({ type, content });
-    // TODO: Call API to generate outline
-    // For now, generate mock data
-    const mockOutline: OutlineData = {
-      title: type === 'topic' ? content : '文档主题分析',
-      slides: [
-        { id: 1, title: '封面', content: ['标题', '副标题'], notes: '' },
-        { id: 2, title: '目录', content: ['要点1', '要点2', '要点3'], notes: '' },
-        { id: 3, title: '背景介绍', content: ['行业现状', '问题分析', '市场机会'], notes: '' },
-        { id: 4, title: '解决方案', content: ['核心思路', '技术架构', '实施路径'], notes: '' },
-        { id: 5, title: '总结与展望', content: ['核心成果', '未来规划'], notes: '' },
-      ],
-    };
-    setOutlineData(mockOutline);
-    setCurrentStep('outline');
+    try {
+      const outline = await generateOutline({ type, content });
+      setOutlineData(outline);
+      setCurrentStep('outline');
+    } catch (error) {
+      console.error('Error generating outline:', error);
+      alert(`生成大纲失败，请重试：${error instanceof Error ? error.message : '未知错误'}`);
+    }
   };
 
-  const handleOutlineConfirm = (slides: SlideData[]) => {
+  const handleOutlineConfirm = async (slides: SlideData[]) => {
     setOutlineData(prev => prev ? { ...prev, slides } : null);
-    // TODO: Call API to generate content for each slide
-    // For now, generate mock content
-    const slidesWithContent: SlideData[] = slides.map(slide => ({
-      ...slide,
-      content: slide.content.map((item, idx) => 
-        `${item} - 基于${inputData?.type === 'topic' ? '主题' : '文档'}分析的详细内容要点${idx + 1}`
-      ),
-      notes: `本页重点：${slide.title}的核心观点和关键数据支撑`,
-    }));
-    setFinalSlides(slidesWithContent);
-    setCurrentStep('content');
+    try {
+      const slidesWithContent: SlideData[] = [];
+      for (const slide of slides) {
+        const content = await generateSlideContent({
+          slideTitle: slide.title,
+          inputType: inputData?.type || 'topic',
+          inputContent: inputData?.content || '',
+        });
+        slidesWithContent.push({
+          ...slide,
+          content: content.content,
+          notes: content.notes,
+        });
+      }
+      setFinalSlides(slidesWithContent);
+      setCurrentStep('content');
+    } catch (error) {
+      console.error('Error generating content:', error);
+      alert(`生成内容失败，请重试：${error instanceof Error ? error.message : '未知错误'}`);
+    }
   };
 
-  const handleContentConfirm = (slides: SlideData[]) => {
+  const handleContentConfirm = async (slides: SlideData[]) => {
     setFinalSlides(slides);
     setCurrentStep('preview');
   };

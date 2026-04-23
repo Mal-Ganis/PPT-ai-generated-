@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FileText, ArrowLeft, RotateCcw, ChevronLeft, ChevronRight, Presentation, FileDown } from 'lucide-react';
+import { FileText, ArrowLeft, RotateCcw, ChevronLeft, ChevronRight, Presentation } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { SlideData } from '../App';
 
@@ -13,19 +13,8 @@ interface PreviewSectionProps {
 const PreviewSection = ({ slides, title, onReset, onBack }: PreviewSectionProps) => {
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [viewMode, setViewMode] = useState<'preview' | 'list'>('preview');
-  const [isExporting, setIsExporting] = useState(false);
 
   const currentSlide = slides[currentSlideIndex];
-
-  const handleExport = async (format: 'pptx' | 'pdf' | 'markdown') => {
-    setIsExporting(true);
-    // Simulate export delay
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    // TODO: Implement actual export logic
-    alert(`导出 ${format.toUpperCase()} 功能将在后续版本实现`);
-    setIsExporting(false);
-  };
 
   const handleDownloadMarkdown = () => {
     let markdown = `# ${title}\n\n`;
@@ -82,6 +71,14 @@ const PreviewSection = ({ slides, title, onReset, onBack }: PreviewSectionProps)
               >
                 <RotateCcw className="w-4 h-4 mr-2" />
                 重新开始
+              </Button>
+              <Button
+                onClick={handleDownloadMarkdown}
+                variant="outline"
+                className="border-gray-200 text-[#1f1f1f]"
+              >
+                <FileText className="w-4 h-4 mr-2" />
+                导出 Markdown
               </Button>
             </div>
           </div>
@@ -219,37 +216,6 @@ const PreviewSection = ({ slides, title, onReset, onBack }: PreviewSectionProps)
             </div>
           )}
 
-          {/* Export Options */}
-          <div className="mt-8 bg-white rounded-2xl shadow-lg p-6">
-            <h3 className="text-lg font-semibold text-[#1f1f1f] mb-4">导出选项</h3>
-            <div className="flex flex-wrap gap-3">
-              <Button
-                onClick={() => handleExport('pptx')}
-                disabled={isExporting}
-                className="bg-[#3898ec] hover:bg-[#0082f3] text-white"
-              >
-                <Presentation className="w-4 h-4 mr-2" />
-                导出 PPTX
-              </Button>
-              <Button
-                onClick={() => handleExport('pdf')}
-                disabled={isExporting}
-                variant="outline"
-                className="border-gray-200 text-[#1f1f1f]"
-              >
-                <FileDown className="w-4 h-4 mr-2" />
-                导出 PDF
-              </Button>
-              <Button
-                onClick={handleDownloadMarkdown}
-                variant="outline"
-                className="border-gray-200 text-[#1f1f1f]"
-              >
-                <FileText className="w-4 h-4 mr-2" />
-                导出 Markdown
-              </Button>
-            </div>
-          </div>
         </div>
       </div>
     </section>

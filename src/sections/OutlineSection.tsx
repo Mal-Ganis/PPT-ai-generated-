@@ -6,13 +6,14 @@ import type { OutlineData, SlideData } from '../App';
 
 interface OutlineSectionProps {
   outline: OutlineData;
-  onConfirm: (slides: SlideData[]) => void;
+  onConfirm: (slides: SlideData[]) => Promise<void>;
   onBack: () => void;
 }
 
 const OutlineSection = ({ outline, onConfirm, onBack }: OutlineSectionProps) => {
   const [slides, setSlides] = useState<SlideData[]>(outline.slides);
   const [isLoading, setIsLoading] = useState(false);
+  const [statusMessage, setStatusMessage] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editValue, setEditValue] = useState('');
 
@@ -65,10 +66,13 @@ const OutlineSection = ({ outline, onConfirm, onBack }: OutlineSectionProps) => 
 
   const handleConfirm = async () => {
     setIsLoading(true);
-    // Simulate API call for content generation
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    onConfirm(slides);
-    setIsLoading(false);
+    setStatusMessage('AI 正在全力工作，正在生成幻灯片内容...');
+    try {
+      await onConfirm(slides);
+    } finally {
+      setIsLoading(false);
+      setStatusMessage('');
+    }
   };
 
   return (
@@ -102,7 +106,7 @@ const OutlineSection = ({ outline, onConfirm, onBack }: OutlineSectionProps) => 
                 {isLoading ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    生成中...
+                    AI 正在全力工作...
                   </>
                 ) : (
                   <>
@@ -114,6 +118,12 @@ const OutlineSection = ({ outline, onConfirm, onBack }: OutlineSectionProps) => 
               </Button>
             </div>
           </div>
+
+          {statusMessage && (
+            <div className="mb-6 rounded-2xl border border-[#3898ec]/20 bg-[#3898ec]/10 p-4 text-sm text-[#1f1f1f]">
+              {statusMessage}
+            </div>
+          )}
 
           {/* Slides List */}
           <div className="space-y-4 mb-8">

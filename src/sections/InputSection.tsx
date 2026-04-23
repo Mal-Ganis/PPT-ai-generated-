@@ -2,38 +2,53 @@ import { useState, useRef } from 'react';
 import { Type, FileUp, ArrowRight, Sparkles, Loader2, X, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import * as mammoth from 'mammoth';
 
 interface InputSectionProps {
-  onSubmit: (type: 'topic' | 'document', content: string) => void;
+  onSubmit: (type: 'topic' | 'document', content: string) => Promise<void>;
 }
 
 const InputSection = ({ onSubmit }: InputSectionProps) => {
   const [inputType, setInputType] = useState<'topic' | 'document'>('topic');
   const [topic, setTopic] = useState('');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [documentContent, setDocumentContent] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
+  const [statusMessage, setStatusMessage] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       setUploadedFile(file);
+      setIsLoading(true);
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const result = await mammoth.extractRawText({ arrayBuffer });
+        setDocumentContent(result.value);
+      } catch (error) {
+        console.error('Error reading document:', error);
+        alert('文档读取失败，请检查文件格式');
+      } finally {
+        setIsLoading(false);
+      }
     }
   };
 
   const handleSubmit = async () => {
     setIsLoading(true);
-    
-    // Simulate API call delay
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    if (inputType === 'topic') {
-      onSubmit('topic', topic);
-    } else {
-      onSubmit('document', uploadedFile?.name || '文档内容');
+    setStatusMessage('AI 正在全力工作，请稍候...');
+
+    try {
+      if (inputType === 'topic') {
+        await onSubmit('topic', topic);
+      } else {
+        await onSubmit('document', documentContent || uploadedFile?.name || '文档内容');
+      }
+    } finally {
+      setIsLoading(false);
+      setStatusMessage('');
     }
-    
-    setIsLoading(false);
   };
 
   const isValid = inputType === 'topic' ? topic.trim().length > 0 : uploadedFile !== null;
@@ -176,6 +191,11 @@ const InputSection = ({ onSubmit }: InputSectionProps) => {
           </div>
 
           {/* Submit Button */}
+          {statusMessage && (
+            <div className="mb-4 rounded-2xl border border-[#3898ec]/20 bg-[#3898ec]/10 p-4 text-center text-sm text-[#1f1f1f]">
+              {statusMessage}
+            </div>
+          )}
           <div className="flex justify-center">
             <Button
               size="lg"
@@ -186,7 +206,7 @@ const InputSection = ({ onSubmit }: InputSectionProps) => {
               {isLoading ? (
                 <>
                   <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                  AI 正在分析...
+                  AI 正在全力工作...
                 </>
               ) : (
                 <>
