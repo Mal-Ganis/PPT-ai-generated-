@@ -1,12 +1,14 @@
 import { useEffect, useRef } from 'react';
-import { ArrowRight, Sparkles, FileText, Zap, Clock, Target, CheckCircle, Layers } from 'lucide-react';
+import { ArrowRight, Sparkles, FileText, Clock, Target, CheckCircle, Layers, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 interface HeroProps {
   onStart: () => void;
+  onShowEvaluations: () => void;
+  onShowConfig: () => void;
 }
 
-const Hero = ({ onStart }: HeroProps) => {
+const Hero = ({ onStart, onShowEvaluations, onShowConfig }: HeroProps) => {
   const heroRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -116,13 +118,24 @@ const Hero = ({ onStart }: HeroProps) => {
               开始体验
               <ArrowRight className="w-5 h-5 ml-2" />
             </Button>
-            <a
-              href="#features"
-              className="btn-magnetic inline-flex items-center gap-2 px-8 py-4 border-2 border-[#1f1f1f]/20 text-[#1f1f1f] hover:bg-[#1f1f1f] hover:text-white rounded-xl transition-all duration-300 font-semibold"
+            <Button
+              size="lg"
+              variant="outline"
+              className="btn-magnetic inline-flex items-center gap-2 px-8 py-6 rounded-xl border-gray-200 text-[#1f1f1f] hover:bg-gray-100"
+              onClick={onShowEvaluations}
             >
-              <Zap className="w-5 h-5" />
-              了解更多
-            </a>
+              <FileText className="w-5 h-5" />
+              查询评估报告
+            </Button>
+            <Button
+              size="lg"
+              variant="outline"
+              className="btn-magnetic inline-flex items-center gap-2 px-8 py-6 rounded-xl border-gray-200 text-[#1f1f1f] hover:bg-gray-100"
+              onClick={onShowConfig}
+            >
+              <Settings className="w-5 h-5" />
+              系统配置
+            </Button>
           </div>
 
           {/* Stats preview */}

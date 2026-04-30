@@ -1,0 +1,15 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://<PROD_DB_HOST>:5432/ppt_ai_prod
+    username: <PROD_DB_USER>
+    password: <PROD_DB_PASSWORD>
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+server:
+  port: 8080

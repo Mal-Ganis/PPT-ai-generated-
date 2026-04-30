@@ -1,14 +1,15 @@
 import { useState, useEffect } from 'react';
-import { Menu, X, FileText, RotateCcw } from 'lucide-react';
+import { Menu, X, FileText, RotateCcw, Settings } from 'lucide-react';
 import type { AppStep } from '../App';
 
 interface NavbarProps {
   currentStep: AppStep;
   onNavigate: (step: AppStep) => void;
   onReset: () => void;
+  onOpenConfig: () => void;
 }
 
-const Navbar = ({ currentStep, onNavigate, onReset }: NavbarProps) => {
+const Navbar = ({ currentStep, onNavigate, onReset, onOpenConfig }: NavbarProps) => {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
@@ -112,6 +113,13 @@ const Navbar = ({ currentStep, onNavigate, onReset }: NavbarProps) => {
 
             {/* Actions */}
             <div className="flex items-center gap-2">
+              <button
+                onClick={onOpenConfig}
+                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-sm text-[#1f1f1f]/60 hover:text-[#3898ec] transition-colors"
+              >
+                <Settings className="w-4 h-4" />
+                系统配置
+              </button>
               {isInWorkflow && (
                 <button
                   onClick={() => {

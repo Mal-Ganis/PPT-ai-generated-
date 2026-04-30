@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { FileText, ArrowLeft, RotateCcw, ChevronLeft, ChevronRight, Presentation } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { loadExternalSources, searchExternalSources, type ExternalSourceDocument } from '@/lib/backend';
 import type { SlideData } from '../App';
 
 interface PreviewSectionProps {
@@ -13,6 +14,9 @@ interface PreviewSectionProps {
 const PreviewSection = ({ slides, title, onReset, onBack }: PreviewSectionProps) => {
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [viewMode, setViewMode] = useState<'preview' | 'list'>('preview');
+  const [externalDocs, setExternalDocs] = useState<ExternalSourceDocument[]>([]);
+  const [isExternalLoading, setIsExternalLoading] = useState(false);
+  const [externalLoadStatus, setExternalLoadStatus] = useState('');
 
   const currentSlide = slides[currentSlideIndex];
 
@@ -35,6 +39,33 @@ const PreviewSection = ({ slides, title, onReset, onBack }: PreviewSectionProps)
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  useEffect(() => {
+    const loadExternalDocs = async () => {
+      setIsExternalLoading(true);
+      try {
+        const results = await searchExternalSources(title, 3);
+        setExternalDocs(results);
+      } catch (error) {
+        console.error('Failed to load external sources:', error);
+      } finally {
+        setIsExternalLoading(false);
+      }
+    };
+
+    loadExternalDocs();
+  }, [title]);
+
+  const handleLoadExternalSourcesToIndex = async () => {
+    setExternalLoadStatus('loading');
+    try {
+      const count = await loadExternalSources(title, 0, 3);
+      setExternalLoadStatus(`已索引 ${count} 条外部文档到本地向量库。`);
+    } catch (error) {
+      console.error('Failed to index external sources:', error);
+      setExternalLoadStatus('外部文档索引失败，请稍后重试。');
+    }
   };
 
   return (
@@ -81,6 +112,56 @@ const PreviewSection = ({ slides, title, onReset, onBack }: PreviewSectionProps)
                 导出 Markdown
               </Button>
             </div>
+          </div>
+
+          {/* External Source Citations */}
+          <div className="mb-6 p-5 rounded-2xl bg-white shadow-sm border border-gray-200">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-4">
+              <div>
+                <h2 className="text-lg font-semibold text-[#1f1f1f] mb-1">外部权威来源</h2>
+                <p className="text-sm text-[#1f1f1f]/70">
+                  通过外部权威知识源检索相关文档，展示来源、发布日期、作者、摘要与可信度评分。
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={handleLoadExternalSourcesToIndex}
+                  className="border-gray-200 text-[#1f1f1f]"
+                >
+                  加载到本地索引
+                </Button>
+                {externalLoadStatus && (
+                  <span className="text-sm text-[#1f1f1f]/70">{externalLoadStatus}</span>
+                )}
+              </div>
+            </div>
+
+            {isExternalLoading ? (
+              <div className="text-sm text-[#1f1f1f]/70">正在检索外部文档，请稍候…</div>
+            ) : externalDocs.length === 0 ? (
+              <div className="text-sm text-[#1f1f1f]/70">未找到匹配的外部来源。</div>
+            ) : (
+              <div className="space-y-4">
+                {externalDocs.map((doc) => (
+                  <div key={doc.url} className="rounded-2xl border border-gray-200 p-4 bg-[#fafbff]">
+                    <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2">
+                      <a href={doc.url} target="_blank" rel="noreferrer" className="text-base font-semibold text-[#1f1f1f] hover:text-[#3898ec]">
+                        {doc.title}
+                      </a>
+                      <div className="text-sm text-[#1f1f1f]/60">
+                        {doc.source} · {doc.publishedAt.split('T')[0] || doc.publishedAt}
+                      </div>
+                    </div>
+                    <p className="mt-2 text-sm text-[#1f1f1f]/70">{doc.summary}</p>
+                    <div className="mt-3 flex flex-wrap gap-2 text-sm">
+                      <span className="px-2 py-1 rounded-full bg-[#e7f5ff] text-[#0f5abb]">作者：{doc.author || '未知'}</span>
+                      <span className="px-2 py-1 rounded-full bg-[#e8f7e9] text-[#1f6b2e]">可信度：{(doc.trustScore * 100).toFixed(0)}%</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* View Mode Toggle */}
