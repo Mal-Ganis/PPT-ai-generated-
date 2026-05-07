@@ -12,6 +12,13 @@ public class EvaluationReportResponse {
     private Integer infoDensityScore;
     private Integer languageExpressionScore;
     private Double totalScore;
+    private Integer autoOutlineLogicScore;
+    private Integer autoInfoDensityScore;
+    private Integer autoFactualAccuracyScore;
+    private Integer autoLanguageExpressionScore;
+    private Integer autoSourceCoverageScore;
+    private Double autoTotalScore;
+    private Double factVerificationRate;
     private String recommendations;
     private String userFeedback;
     private OffsetDateTime evaluationTime;
@@ -78,6 +85,62 @@ public class EvaluationReportResponse {
 
     public void setTotalScore(Double totalScore) {
         this.totalScore = totalScore;
+    }
+
+    public Integer getAutoOutlineLogicScore() {
+        return autoOutlineLogicScore;
+    }
+
+    public void setAutoOutlineLogicScore(Integer autoOutlineLogicScore) {
+        this.autoOutlineLogicScore = autoOutlineLogicScore;
+    }
+
+    public Integer getAutoInfoDensityScore() {
+        return autoInfoDensityScore;
+    }
+
+    public void setAutoInfoDensityScore(Integer autoInfoDensityScore) {
+        this.autoInfoDensityScore = autoInfoDensityScore;
+    }
+
+    public Integer getAutoFactualAccuracyScore() {
+        return autoFactualAccuracyScore;
+    }
+
+    public void setAutoFactualAccuracyScore(Integer autoFactualAccuracyScore) {
+        this.autoFactualAccuracyScore = autoFactualAccuracyScore;
+    }
+
+    public Integer getAutoLanguageExpressionScore() {
+        return autoLanguageExpressionScore;
+    }
+
+    public void setAutoLanguageExpressionScore(Integer autoLanguageExpressionScore) {
+        this.autoLanguageExpressionScore = autoLanguageExpressionScore;
+    }
+
+    public Integer getAutoSourceCoverageScore() {
+        return autoSourceCoverageScore;
+    }
+
+    public void setAutoSourceCoverageScore(Integer autoSourceCoverageScore) {
+        this.autoSourceCoverageScore = autoSourceCoverageScore;
+    }
+
+    public Double getAutoTotalScore() {
+        return autoTotalScore;
+    }
+
+    public void setAutoTotalScore(Double autoTotalScore) {
+        this.autoTotalScore = autoTotalScore;
+    }
+
+    public Double getFactVerificationRate() {
+        return factVerificationRate;
+    }
+
+    public void setFactVerificationRate(Double factVerificationRate) {
+        this.factVerificationRate = factVerificationRate;
     }
 
     public String getRecommendations() {

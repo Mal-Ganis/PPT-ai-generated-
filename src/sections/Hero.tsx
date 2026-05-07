@@ -1,15 +1,73 @@
-import { useEffect, useRef } from 'react';
-import { ArrowRight, Sparkles, FileText, Clock, Target, CheckCircle, Layers, Settings } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import {
+  ArrowRight,
+  Sparkles,
+  FileText,
+  FolderOpen,
+  Target,
+  CheckCircle,
+  Layers,
+  Settings,
+  Search,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { fetchProject, listProjects } from '@/lib/backend';
 
 interface HeroProps {
   onStart: () => void;
   onShowEvaluations: () => void;
   onShowConfig: () => void;
+  onShowProjects: () => void;
 }
 
-const Hero = ({ onStart, onShowEvaluations, onShowConfig }: HeroProps) => {
+const Hero = ({ onStart, onShowEvaluations, onShowConfig, onShowProjects }: HeroProps) => {
   const heroRef = useRef<HTMLDivElement>(null);
+  const [stats, setStats] = useState({
+    projectCount: '—',
+    quality: '—',
+    factRate: '—',
+    slideCount: '—',
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const projects = await listProjects();
+        if (cancelled || !projects.length) {
+          if (!cancelled) {
+            setStats((s) => ({ ...s, projectCount: '0' }));
+          }
+          return;
+        }
+        const sorted = [...projects].sort(
+          (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+        );
+        const detail = await fetchProject(sorted[0].id);
+        if (cancelled) return;
+        const evs = detail.evaluations ?? [];
+        const latest = evs[0];
+        const auto = latest?.autoTotalScore;
+        const fact = latest?.factVerificationRate;
+        setStats({
+          projectCount: String(projects.length),
+          quality:
+            auto != null && Number.isFinite(auto) ? `${(auto / 20).toFixed(1)}/5` : '—',
+          factRate:
+            fact != null && Number.isFinite(fact) ? `${Math.round(fact * 100)}%` : '—',
+          slideCount: detail.slides?.length != null ? `${detail.slides.length} 页` : '—',
+        });
+      } catch {
+        if (!cancelled) {
+          setStats({ projectCount: '—', quality: '—', factRate: '—', slideCount: '—' });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const hero = heroRef.current;
@@ -118,6 +176,21 @@ const Hero = ({ onStart, onShowEvaluations, onShowConfig }: HeroProps) => {
               开始体验
               <ArrowRight className="w-5 h-5 ml-2" />
             </Button>
+            <Button size="lg" variant="outline" className="btn-magnetic inline-flex items-center gap-2 px-8 py-6 rounded-xl border-gray-200 text-[#1f1f1f] hover:bg-gray-100" asChild>
+              <Link to="/knowledge">
+                <Search className="w-5 h-5" />
+                知识检索
+              </Link>
+            </Button>
+            <Button
+              size="lg"
+              variant="outline"
+              className="btn-magnetic inline-flex items-center gap-2 px-8 py-6 rounded-xl border-gray-200 text-[#1f1f1f] hover:bg-gray-100"
+              onClick={onShowProjects}
+            >
+              <FileText className="w-5 h-5" />
+              历史项目
+            </Button>
             <Button
               size="lg"
               variant="outline"
@@ -125,7 +198,7 @@ const Hero = ({ onStart, onShowEvaluations, onShowConfig }: HeroProps) => {
               onClick={onShowEvaluations}
             >
               <FileText className="w-5 h-5" />
-              查询评估报告
+              评估报告
             </Button>
             <Button
               size="lg"
@@ -144,10 +217,10 @@ const Hero = ({ onStart, onShowEvaluations, onShowConfig }: HeroProps) => {
             style={{ animationDelay: '1400ms' }}
           >
             {[
-              { value: '180秒', label: '生成时间', icon: Clock },
-              { value: '4.2/5', label: '质量评分', icon: Target },
-              { value: '92%', label: '事实准确率', icon: CheckCircle },
-              { value: '3.5条', label: '信息密度', icon: Layers },
+              { value: stats.projectCount, label: '历史项目数', icon: FolderOpen },
+              { value: stats.quality, label: '最近自动质量', icon: Target },
+              { value: stats.factRate, label: '最近事实核验', icon: CheckCircle },
+              { value: stats.slideCount, label: '最近项目页数', icon: Layers },
             ].map((stat, index) => (
               <div key={index} className="text-center">
                 <stat.icon className="w-6 h-6 text-[#3898ec] mx-auto mb-2" />

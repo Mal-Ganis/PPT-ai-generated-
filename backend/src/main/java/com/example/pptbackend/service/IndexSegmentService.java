@@ -19,10 +19,12 @@ public class IndexSegmentService {
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
+    private final EmbeddingService embeddingService;
 
-    public IndexSegmentService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
+    public IndexSegmentService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper, EmbeddingService embeddingService) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
+        this.embeddingService = embeddingService;
     }
 
     @Transactional
@@ -41,20 +43,42 @@ public class IndexSegmentService {
     }
 
     @Transactional(readOnly = true)
+    public SearchResponse searchByText(Long projectId, String query, Integer topK) {
+        if (query == null || query.isBlank()) {
+            throw new IllegalArgumentException("query is required");
+        }
+        SearchRequest request = new SearchRequest();
+        request.setProjectId(projectId);
+        request.setQueryEmbedding(embeddingService.embed(query));
+        request.setTopK(topK != null && topK > 0 ? topK : 5);
+        return search(request);
+    }
+
+    @Transactional(readOnly = true)
     public SearchResponse search(SearchRequest request) {
         validateSearchRequest(request);
 
         String vectorLiteral = toVectorLiteral(request.getQueryEmbedding());
         int topK = request.getTopK() != null && request.getTopK() > 0 ? request.getTopK() : 5;
 
-        String sql = "SELECT id, project_id, segment_id, content, metadata, embedding <=> ?::vector AS distance "
-            + "FROM index_segments "
-            + "ORDER BY distance ASC "
-            + "LIMIT ?";
+        String sql;
+        Object[] params;
+        if (request.getProjectId() != null) {
+            sql = "SELECT id, project_id, segment_id, content, metadata, embedding <=> ?::vector AS distance "
+                + "FROM index_segments "
+                + "WHERE project_id = ? "
+                + "ORDER BY distance ASC "
+                + "LIMIT ?";
+            params = new Object[]{vectorLiteral, request.getProjectId(), topK};
+        } else {
+            sql = "SELECT id, project_id, segment_id, content, metadata, embedding <=> ?::vector AS distance "
+                + "FROM index_segments "
+                + "ORDER BY distance ASC "
+                + "LIMIT ?";
+            params = new Object[]{vectorLiteral, topK};
+        }
 
-        List<IndexSearchResult> results = jdbcTemplate.query(sql,
-            new Object[]{vectorLiteral, topK},
-            rowMapper());
+        List<IndexSearchResult> results = jdbcTemplate.query(sql, params, rowMapper());
 
         SearchResponse response = new SearchResponse();
         response.setResults(results);

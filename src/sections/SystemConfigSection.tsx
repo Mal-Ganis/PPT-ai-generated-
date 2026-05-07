@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { ArrowLeft, CircleCheck, Cpu } from 'lucide-react';
+import { ArrowLeft, CircleCheck, Cpu, RotateCcw } from 'lucide-react';
+import { FlowExitNav } from '@/components/FlowExitNav';
 import { Button } from '@/components/ui/button';
-import { fetchSystemConfig, saveSystemConfig } from '@/lib/backend';
+import { fetchSystemConfig, resetSystemConfigToDefaults, saveSystemConfig } from '@/lib/backend';
 import type { SystemConfig } from '@/lib/backend';
 
 interface SystemConfigSectionProps {
@@ -13,6 +14,7 @@ const SystemConfigSection = ({ onBack, onSave }: SystemConfigSectionProps) => {
   const [config, setConfig] = useState<SystemConfig | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
@@ -49,6 +51,29 @@ const SystemConfigSection = ({ onBack, onSave }: SystemConfigSectionProps) => {
     }
   };
 
+  const handleResetDefaults = async () => {
+    if (
+      !confirm(
+        '确定将 LLM 参数与两份 Prompt 模板重置为后端内置默认值吗？会立即写入数据库；当前表单里未保存的修改将被覆盖。',
+      )
+    ) {
+      return;
+    }
+    setError('');
+    setMessage('');
+    setIsResetting(true);
+    try {
+      const restored = await resetSystemConfigToDefaults();
+      setConfig(restored);
+      onSave(restored);
+      setMessage('已重置为内置默认配置并保存到后端（含新版大纲模板）。');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '重置失败');
+    } finally {
+      setIsResetting(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <section className="min-h-screen pt-24 pb-16 bg-[#f3f3f3]">
@@ -81,6 +106,7 @@ const SystemConfigSection = ({ onBack, onSave }: SystemConfigSectionProps) => {
     <section className="min-h-screen pt-24 pb-16 bg-[#f3f3f3]">
       <div className="section-container">
         <div className="section-inner max-w-5xl">
+          <FlowExitNav className="mb-4" />
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
             <div>
               <h1 className="text-3xl font-bold text-[#1f1f1f]">系统配置</h1>
@@ -197,9 +223,21 @@ const SystemConfigSection = ({ onBack, onSave }: SystemConfigSectionProps) => {
               <Button onClick={onBack} variant="outline" className="border-gray-200 text-[#1f1f1f] gap-2">
                 <ArrowLeft className="w-4 h-4" /> 返回
               </Button>
-              <Button onClick={handleSave} disabled={isSaving} className="gap-2">
-                <CircleCheck className="w-4 h-4" /> 保存配置
-              </Button>
+              <div className="flex flex-wrap gap-3 sm:justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleResetDefaults}
+                  disabled={isSaving || isResetting}
+                  className="gap-2 border-amber-200 text-amber-900 hover:bg-amber-50"
+                >
+                  <RotateCcw className={`w-4 h-4 ${isResetting ? 'animate-spin' : ''}`} />
+                  {isResetting ? '重置中…' : '重置为默认配置'}
+                </Button>
+                <Button onClick={handleSave} disabled={isSaving || isResetting} className="gap-2">
+                  <CircleCheck className="w-4 h-4" /> {isSaving ? '保存中…' : '保存配置'}
+                </Button>
+              </div>
             </div>
           </div>
         </div>

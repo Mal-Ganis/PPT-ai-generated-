@@ -23,3 +23,40 @@ management:
       show-details: always
 server:
   port: 8080
+
+# 外部检索与向量 API（密钥请用环境变量或本机 application-local.yml，勿提交仓库）
+# DEEPSEEK_API_KEY：大纲与幻灯片生成（必填）
+# TAVILY_API_KEY / SILICONFLOW_API_KEY：检索与语义事实率（可选，未配则降级）
+deepseek:
+  api-key: ${DEEPSEEK_API_KEY:}
+
+tavily:
+  api-key: ${TAVILY_API_KEY:}
+  # basic | advanced | fast | ultra-fast — advanced 召回更稳，适合中文主题验收
+  search-depth: ${TAVILY_SEARCH_DEPTH:advanced}
+  max-results: ${TAVILY_MAX_RESULTS:10}
+  timeout-seconds: ${TAVILY_TIMEOUT_SECONDS:45}
+  # fallback：仅 Tavily 失败或结果<2 时拉维基；supplement：Tavily 后再合并维基（中文要点与 ILF 对齐更好）
+  wikipedia-mode: ${TAVILY_WIKIPEDIA_MODE:supplement}
+
+siliconflow:
+  api-key: ${SILICONFLOW_API_KEY:}
+
+# 大纲：权威检索接入主流程（无 Tavily Key 时维基兜底仍可能命中）
+outline:
+  use-external-retrieval: ${OUTLINE_USE_EXTERNAL_RETRIEVAL:true}
+  external-snippet-max-chars: ${OUTLINE_EXTERNAL_SNIPPET_MAX_CHARS:6000}
+  external-result-limit: ${OUTLINE_EXTERNAL_RESULT_LIMIT:8}
+  max-tokens: ${OUTLINE_MAX_TOKENS:2048}
+
+# 正文生成：token 与 ILF-2 为空时的 Tavily 兜底
+generation:
+  slide-max-tokens: ${GENERATION_SLIDE_MAX_TOKENS:2048}
+  slide-fallback-tavily: ${GENERATION_SLIDE_FALLBACK_TAVILY:true}
+  slide-fallback-result-limit: ${GENERATION_SLIDE_FALLBACK_LIMIT:2}
+  # P3：生成后按自动分多级修订（空白向量库时分数可能仍偏低，可通过阈值关闭）
+  self-correction-enabled: ${GENERATION_SELF_CORRECTION_ENABLED:true}
+  self-correction-tier1-auto-below: ${GENERATION_SC_T1_AUTO:76}
+  self-correction-tier1-fact-below: ${GENERATION_SC_T1_FACT:0.58}
+  self-correction-tier2-auto-below: ${GENERATION_SC_T2_AUTO:70}
+  self-correction-tier2-fact-below: ${GENERATION_SC_T2_FACT:0.48}

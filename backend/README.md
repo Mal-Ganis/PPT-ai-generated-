@@ -28,3 +28,13 @@ mvn spring-boot:run
 ```powershell
 mvn spring-boot:run -Dspring-boot.run.profiles=prod
 ```
+
+## EIF-1 外部知识源
+
+详见 [`docs/EIF-1.md`](docs/EIF-1.md)：`Spaceflight News`（航天资讯 JSON）与中文 **维基百科 MediaWiki 搜索**（公开 API，无需密钥）。
+
+## 文档上传（PDF / DOCX）
+
+- **multipart**：`POST /api/projects/document/upload`，表单字段 `file`，可选 `title`。
+- PDF 使用 **Apache PDFBox** 抽正文；DOCX 使用 **Apache POI**；TXT 按 UTF-8 读取。
+- 仍需配置环境变量 **`DEEPSEEK_API_KEY`** 供大纲与正文生成调用。

@@ -39,6 +39,31 @@ public class EvaluationReport {
     @Column(nullable = false)
     private Double totalScore;
 
+    /** 自动评估：结构完整性 / 逻辑（启发式） */
+    @Column
+    private Integer autoOutlineLogicScore;
+
+    @Column
+    private Integer autoInfoDensityScore;
+
+    @Column
+    private Integer autoFactualAccuracyScore;
+
+    @Column
+    private Integer autoLanguageExpressionScore;
+
+    /** 有引用来源的幻灯片占比得分 */
+    @Column
+    private Integer autoSourceCoverageScore;
+
+    /** 自动加权总分（各自动维度） */
+    @Column
+    private Double autoTotalScore;
+
+    /** 事实语义抽检：新规为 0–1（证据支持度均值）；旧数据可能仍为词重叠 0–100 */
+    @Column
+    private Double factVerificationRate;
+
     @Column(columnDefinition = "TEXT")
     private String recommendations;
 
@@ -116,6 +141,62 @@ public class EvaluationReport {
 
     public void setTotalScore(Double totalScore) {
         this.totalScore = totalScore;
+    }
+
+    public Integer getAutoOutlineLogicScore() {
+        return autoOutlineLogicScore;
+    }
+
+    public void setAutoOutlineLogicScore(Integer autoOutlineLogicScore) {
+        this.autoOutlineLogicScore = autoOutlineLogicScore;
+    }
+
+    public Integer getAutoInfoDensityScore() {
+        return autoInfoDensityScore;
+    }
+
+    public void setAutoInfoDensityScore(Integer autoInfoDensityScore) {
+        this.autoInfoDensityScore = autoInfoDensityScore;
+    }
+
+    public Integer getAutoFactualAccuracyScore() {
+        return autoFactualAccuracyScore;
+    }
+
+    public void setAutoFactualAccuracyScore(Integer autoFactualAccuracyScore) {
+        this.autoFactualAccuracyScore = autoFactualAccuracyScore;
+    }
+
+    public Integer getAutoLanguageExpressionScore() {
+        return autoLanguageExpressionScore;
+    }
+
+    public void setAutoLanguageExpressionScore(Integer autoLanguageExpressionScore) {
+        this.autoLanguageExpressionScore = autoLanguageExpressionScore;
+    }
+
+    public Integer getAutoSourceCoverageScore() {
+        return autoSourceCoverageScore;
+    }
+
+    public void setAutoSourceCoverageScore(Integer autoSourceCoverageScore) {
+        this.autoSourceCoverageScore = autoSourceCoverageScore;
+    }
+
+    public Double getAutoTotalScore() {
+        return autoTotalScore;
+    }
+
+    public void setAutoTotalScore(Double autoTotalScore) {
+        this.autoTotalScore = autoTotalScore;
+    }
+
+    public Double getFactVerificationRate() {
+        return factVerificationRate;
+    }
+
+    public void setFactVerificationRate(Double factVerificationRate) {
+        this.factVerificationRate = factVerificationRate;
     }
 
     public String getRecommendations() {

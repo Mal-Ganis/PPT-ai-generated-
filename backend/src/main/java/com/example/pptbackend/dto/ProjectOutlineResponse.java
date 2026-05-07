@@ -34,10 +34,23 @@ public class ProjectOutlineResponse {
     }
 
     public static class OutlineSlide {
+        /** Persisted slide primary key (ILF-1). */
+        private Long slideId;
+        /** Display order / legacy outline id from LLM JSON. */
         private Integer id;
+        /** 章节名（同一章节可对应多页幻灯片）。 */
+        private String chapter;
         private String title;
         private String[] content;
         private String notes;
+
+        public Long getSlideId() {
+            return slideId;
+        }
+
+        public void setSlideId(Long slideId) {
+            this.slideId = slideId;
+        }
 
         public Integer getId() {
             return id;
@@ -45,6 +58,14 @@ public class ProjectOutlineResponse {
 
         public void setId(Integer id) {
             this.id = id;
+        }
+
+        public String getChapter() {
+            return chapter;
+        }
+
+        public void setChapter(String chapter) {
+            this.chapter = chapter;
         }
 
         public String getTitle() {

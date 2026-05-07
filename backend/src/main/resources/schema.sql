@@ -27,6 +27,10 @@ CREATE TABLE IF NOT EXISTS system_config (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- 若库中曾存在 Hibernate 误建的 topp/topk 列，删除以免与 top_p/top_k 冲突
+ALTER TABLE system_config DROP COLUMN IF EXISTS topp;
+ALTER TABLE system_config DROP COLUMN IF EXISTS topk;
+
 CREATE TABLE IF NOT EXISTS evaluation_reports (
     id BIGSERIAL PRIMARY KEY,
     project_id BIGINT NOT NULL,
@@ -42,3 +46,11 @@ CREATE TABLE IF NOT EXISTS evaluation_reports (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE evaluation_reports ADD COLUMN IF NOT EXISTS auto_outline_logic_score INTEGER;
+ALTER TABLE evaluation_reports ADD COLUMN IF NOT EXISTS auto_info_density_score INTEGER;
+ALTER TABLE evaluation_reports ADD COLUMN IF NOT EXISTS auto_factual_accuracy_score INTEGER;
+ALTER TABLE evaluation_reports ADD COLUMN IF NOT EXISTS auto_language_expression_score INTEGER;
+ALTER TABLE evaluation_reports ADD COLUMN IF NOT EXISTS auto_source_coverage_score INTEGER;
+ALTER TABLE evaluation_reports ADD COLUMN IF NOT EXISTS auto_total_score DOUBLE PRECISION;
+ALTER TABLE evaluation_reports ADD COLUMN IF NOT EXISTS fact_verification_rate DOUBLE PRECISION;

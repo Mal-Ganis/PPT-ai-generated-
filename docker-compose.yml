@@ -1,0 +1,16 @@
+# 本地数据库：docker compose up -d
+# JDBC: jdbc:postgresql://localhost:5432/ppt_ai  用户 ppt_user / ppt_password
+services:
+  postgres:
+    # 需带 pgvector 扩展（ILF-2 向量表）；勿用无 vector 的纯 postgres 官方镜像
+    image: pgvector/pgvector:pg16
+    container_name: ppt-ai-postgres
+    environment:
+      POSTGRES_USER: ppt_user
+      POSTGRES_PASSWORD: ppt_password
+      POSTGRES_DB: ppt_ai
+    ports:
+      - "5432:5432"
+    volumes:
+      - D:\docker-data\ppt-ai\postgres:/var/lib/postgresql/data
+

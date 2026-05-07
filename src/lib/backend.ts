@@ -1,4 +1,37 @@
 import axios from 'axios';
+import { toast } from 'sonner';
+
+/**
+ * VITE_API_BASE 应为「协议 + 主机 + 端口」，不要带 `/api`。
+ * 若误写为 `http://localhost:8080/api`，axios 会与路径 `/api/...` 拼成 `/api/api/...` 导致 404。
+ */
+function normalizeBackendOrigin(base: string): string {
+  let b = base.trim().replace(/\/+$/, '');
+  if (b.endsWith('/api')) {
+    b = b.slice(0, -4).replace(/\/+$/, '');
+  }
+  return b || 'http://localhost:8080';
+}
+
+const backendApi = axios.create({
+  baseURL: normalizeBackendOrigin(import.meta.env.VITE_API_BASE ?? 'http://localhost:8080'),
+  timeout: 120000,
+});
+
+backendApi.interceptors.response.use(
+  (r) => r,
+  (err: unknown) => {
+    const ax = err as { response?: { status?: number; data?: { message?: string } }; message?: string };
+    const status = ax.response?.status;
+    const msg = ax.response?.data?.message ?? ax.message ?? '请求失败';
+    if (!status || status >= 500) {
+      toast.error(String(msg));
+    } else if (status === 503 || status === 502) {
+      toast.error(String(msg));
+    }
+    return Promise.reject(err);
+  },
+);
 
 export interface EvaluationReport {
   id: number;
@@ -9,15 +42,17 @@ export interface EvaluationReport {
   infoDensityScore: number;
   languageExpressionScore: number;
   totalScore: number;
+  autoOutlineLogicScore?: number;
+  autoInfoDensityScore?: number;
+  autoFactualAccuracyScore?: number;
+  autoLanguageExpressionScore?: number;
+  autoSourceCoverageScore?: number;
+  autoTotalScore?: number;
+  factVerificationRate?: number;
   recommendations?: string;
   userFeedback?: string;
   evaluationTime: string;
 }
-
-const backendApi = axios.create({
-  baseURL: 'http://localhost:8080',
-  timeout: 30000,
-});
 
 export interface SystemConfig {
   id?: number;
@@ -41,19 +76,124 @@ export interface ExternalSourceDocument {
   trustScore: number;
 }
 
+export interface OutlineSlideDto {
+  slideId?: number;
+  id: number;
+  chapter?: string;
+  title: string;
+  content: string[];
+  notes: string;
+}
+
 export interface ProjectOutlineResponse {
   projectId: number;
   title: string;
-  slides: {
-    id: number;
+  slides: OutlineSlideDto[];
+}
+
+export interface ProjectSummary {
+  id: number;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectDetailSlide {
+  id: number;
+  position: number;
+  chapter?: string | null;
+  title: string;
+  body?: string;
+  bullets?: string[];
+  sources?: string[];
+  notes?: string;
+}
+
+export interface ProjectDetailResponse {
+  id: number;
+  title: string;
+  theme: string;
+  createdAt: string;
+  updatedAt: string;
+  slides: ProjectDetailSlide[];
+  evaluations: EvaluationReport[];
+}
+
+export interface UpsertOutlinePayload {
+  title?: string;
+  theme?: string;
+  slides: Array<{
+    position: number;
+    chapter?: string | null;
     title: string;
-    content: string[];
-    notes: string;
-  }[];
+    body?: string;
+    bullets?: string[];
+    sources?: string[];
+    notes?: string;
+  }>;
+}
+
+export interface GenerateSlidesPayload {
+  inputType?: string;
+  inputContent?: string;
+}
+
+export interface SlideContentResponse {
+  content: string[];
+  notes: string;
+  sources?: string[];
+}
+
+export interface IndexSearchResult {
+  id: number;
+  projectId: number;
+  segmentId: string;
+  content: string;
+  metadata?: string;
+  distance: number;
+}
+
+export interface SearchResponse {
+  results: IndexSearchResult[];
+}
+
+export interface CreateEvaluationPayload {
+  pageId?: number;
+  outlineLogicScore: number;
+  factualAccuracyScore: number;
+  infoDensityScore: number;
+  languageExpressionScore: number;
+  recommendations?: string;
+  userFeedback?: string;
 }
 
 export const fetchEvaluationReports = async (projectId: number): Promise<EvaluationReport[]> => {
   const response = await backendApi.get<EvaluationReport[]>(`/api/projects/${projectId}/evaluations`);
+  return response.data;
+};
+
+export const submitEvaluationReport = async (
+  projectId: number,
+  payload: CreateEvaluationPayload,
+): Promise<number> => {
+  const response = await backendApi.post<number>(`/api/projects/${projectId}/evaluations`, payload);
+  return response.data;
+};
+
+export interface EvaluationCalibrationPayload {
+  agreeWithAuto: boolean;
+  note?: string;
+}
+
+/** 拇指校准：认同则将人工分项对齐最新自动启发式分 */
+export const submitEvaluationCalibration = async (
+  projectId: number,
+  payload: EvaluationCalibrationPayload,
+): Promise<number> => {
+  const response = await backendApi.post<number>(
+    `/api/projects/${projectId}/evaluations/calibrate`,
+    payload,
+  );
   return response.data;
 };
 
@@ -67,19 +207,97 @@ export const saveSystemConfig = async (config: SystemConfig): Promise<SystemConf
   return response.data;
 };
 
-export const createProjectFromTopic = async (
-  topic: string,
+/** 将数据库中的配置重置为后端内置默认值（含新版大纲/幻灯片模板），立即持久化 */
+export const resetSystemConfigToDefaults = async (): Promise<SystemConfig> => {
+  const response = await backendApi.post<SystemConfig>('/api/config/reset-defaults');
+  return response.data;
+};
+
+export const listProjects = async (): Promise<ProjectSummary[]> => {
+  const response = await backendApi.get<ProjectSummary[]>('/api/projects');
+  return response.data;
+};
+
+export const fetchProject = async (projectId: number): Promise<ProjectDetailResponse> => {
+  const response = await backendApi.get<ProjectDetailResponse>(`/api/projects/${projectId}`);
+  return response.data;
+};
+
+export const createProjectFromTopic = async (topic: string): Promise<ProjectOutlineResponse> => {
+  const response = await backendApi.post<ProjectOutlineResponse>('/api/projects/topic', { topic });
+  return response.data;
+};
+
+export const createProjectFromDocument = async (
+  title: string,
+  text: string,
 ): Promise<ProjectOutlineResponse> => {
-  const response = await backendApi.post<ProjectOutlineResponse>('/api/projects/topic', {
-    topic,
+  const response = await backendApi.post<ProjectOutlineResponse>('/api/projects/document', {
+    title,
+    text,
   });
   return response.data;
 };
 
-export const searchExternalSources = async (
-  query: string,
-  limit = 3,
-): Promise<ExternalSourceDocument[]> => {
+/** PDF/DOCX/TXT 服务端解析后生成项目（multipart/form-data） */
+export const uploadDocumentFile = async (formData: FormData): Promise<ProjectOutlineResponse> => {
+  const response = await backendApi.post<ProjectOutlineResponse>('/api/projects/document/upload', formData);
+  return response.data;
+};
+
+export const syncProjectOutline = async (
+  projectId: number,
+  payload: UpsertOutlinePayload,
+): Promise<void> => {
+  await backendApi.put(`/api/projects/${projectId}/outline`, payload);
+};
+
+/** PATCH 单页：不影响项目中其它幻灯片 */
+export interface UpdateSlidePayload {
+  title?: string;
+  chapter?: string;
+  body?: string;
+  bullets?: string[];
+  sources?: string[];
+  notes?: string;
+}
+
+export const updateProjectSlide = async (
+  projectId: number,
+  slideId: number,
+  payload: UpdateSlidePayload,
+): Promise<ProjectDetailResponse> => {
+  const response = await backendApi.patch<ProjectDetailResponse>(
+    `/api/projects/${projectId}/slides/${slideId}`,
+    payload,
+  );
+  return response.data;
+};
+
+export const generateSlideContents = async (
+  projectId: number,
+  payload: GenerateSlidesPayload,
+): Promise<ProjectDetailResponse> => {
+  const response = await backendApi.post<ProjectDetailResponse>(
+    `/api/projects/${projectId}/slides/generate`,
+    payload,
+  );
+  return response.data;
+};
+
+export const regenerateSlide = async (
+  projectId: number,
+  slideId: number,
+  payload: GenerateSlidesPayload,
+): Promise<SlideContentResponse> => {
+  const response = await backendApi.post<SlideContentResponse>(
+    `/api/projects/${projectId}/slides/${slideId}/regenerate`,
+    payload,
+  );
+  return response.data;
+};
+
+export const searchExternalSources = async (query: string, limit = 3): Promise<ExternalSourceDocument[]> => {
   const response = await backendApi.get<ExternalSourceDocument[]>('/api/external-sources/search', {
     params: { query, limit },
   });
@@ -97,4 +315,17 @@ export const loadExternalSources = async (
     projectId,
   });
   return response.data.loadedCount;
+};
+
+export const searchIndexByText = async (
+  query: string,
+  projectId?: number,
+  topK = 5,
+): Promise<SearchResponse> => {
+  const response = await backendApi.post<SearchResponse>('/api/index/search-text', {
+    query,
+    projectId: projectId ?? null,
+    topK,
+  });
+  return response.data;
 };

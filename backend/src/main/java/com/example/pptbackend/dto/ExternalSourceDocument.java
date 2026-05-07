@@ -9,6 +9,10 @@ public class ExternalSourceDocument {
     private String summary;
     private String url;
     private Double trustScore;
+    /** tavily | mediawiki */
+    private String sourceType;
+    /** 与权威检索得分对应，0~1 */
+    private Double credibilityScore;
 
     public String getTitle() {
         return title;
@@ -64,5 +68,21 @@ public class ExternalSourceDocument {
 
     public void setTrustScore(Double trustScore) {
         this.trustScore = trustScore;
+    }
+
+    public String getSourceType() {
+        return sourceType;
+    }
+
+    public void setSourceType(String sourceType) {
+        this.sourceType = sourceType;
+    }
+
+    public Double getCredibilityScore() {
+        return credibilityScore;
+    }
+
+    public void setCredibilityScore(Double credibilityScore) {
+        this.credibilityScore = credibilityScore;
     }
 }

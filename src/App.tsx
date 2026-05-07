@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import './App.css';
+import { Toaster } from '@/components/ui/sonner';
 import Navbar from './sections/Navbar';
 import Hero from './sections/Hero';
 import InputSection from './sections/InputSection';
@@ -8,18 +10,41 @@ import ContentSection from './sections/ContentSection';
 import PreviewSection from './sections/PreviewSection';
 import EvaluationSection from './sections/EvaluationSection';
 import SystemConfigSection from './sections/SystemConfigSection';
+import ProjectsSection from './sections/ProjectsSection';
 import Footer from './sections/Footer';
-import { fetchSystemConfig, createProjectFromTopic } from './lib/backend';
-import { generateOutline, generateSlideContent } from './lib/api';
-import type { SystemConfig } from './lib/api';
+import SlideDetailView from './pages/SlideDetailView';
+import KnowledgeSearchPage from './pages/KnowledgeSearchPage';
+import {
+  createProjectFromTopic,
+  createProjectFromDocument,
+  uploadDocumentFile,
+  syncProjectOutline,
+  generateSlideContents,
+  fetchProject,
+  type ProjectOutlineResponse,
+  type ProjectDetailResponse,
+  type UpsertOutlinePayload,
+  type SystemConfig,
+} from './lib/backend';
 
-export type AppStep = 'home' | 'input' | 'outline' | 'content' | 'preview' | 'evaluation' | 'config';
+export type AppStep =
+  | 'home'
+  | 'input'
+  | 'outline'
+  | 'content'
+  | 'preview'
+  | 'evaluation'
+  | 'config'
+  | 'projects';
 
 export interface SlideData {
   id: number;
+  slideId?: number;
+  chapter?: string;
   title: string;
   content: string[];
   notes: string;
+  sources?: string[];
 }
 
 export interface OutlineData {
@@ -27,79 +52,125 @@ export interface OutlineData {
   slides: SlideData[];
 }
 
-const defaultSystemConfig: SystemConfig = {
-  llmModel: 'deepseek-reasoner',
-  temperature: 0.7,
-  maxTokens: 1024,
-  topP: 0.95,
-  topK: 1,
-  retrievalLimit: 5,
-  outlinePromptTemplate: `请根据以下主题生成一个专业的PPT大纲。主题：{content}\n\n请以JSON格式返回，格式如下：{\n  \"title\": \"大纲标题\",\n  \"slides\": [\n    {\n      \"id\": 1,\n      \"title\": \"幻灯片标题\",\n      \"content\": [\"要点1\", \"要点2\"],\n      \"notes\": \"演讲者备注\"\n    }\n  ]\n}\n\n大纲应该包括封面、目录、主要内容章节和总结，至少5-8页。`,
-  slidePromptTemplate: `请为PPT幻灯片生成详细内容。\n\n幻灯片标题：{slideTitle}\n原始输入类型：{inputType}\n原始输入内容：{inputContent}\n\n请生成：\n1. 3-5个主要内容要点（数组）\n2. 演讲者备注（字符串）\n\n请以JSON格式返回：{\n  \"content\": [\"要点1\", \"要点2\", \"要点3\"],\n  \"notes\": \"演讲者备注内容\"\n}`,
-};
+function mapOutlineResponse(outline: ProjectOutlineResponse): OutlineData {
+  return {
+    title: outline.title,
+    slides: outline.slides.map((s) => ({
+      id: s.id,
+      slideId: s.slideId,
+      chapter: s.chapter,
+      title: s.title,
+      content: [...s.content],
+      notes: s.notes,
+    })),
+  };
+}
 
-function App() {
+function mapDetailToSlides(detail: ProjectDetailResponse): SlideData[] {
+  return [...detail.slides]
+    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+    .map((s) => ({
+      id: s.position ?? s.id,
+      slideId: s.id,
+      chapter: s.chapter ?? undefined,
+      title: s.title,
+      content: s.bullets && s.bullets.length > 0 ? [...s.bullets] : s.body ? [s.body] : [],
+      notes: s.notes ?? '',
+      sources: s.sources,
+    }));
+}
+
+function buildOutlinePayload(title: string, theme: string, slides: SlideData[]): UpsertOutlinePayload {
+  return {
+    title,
+    theme,
+    slides: slides.map((s, index) => ({
+      position: index + 1,
+      chapter: s.chapter,
+      title: s.title,
+      bullets: s.content,
+      notes: s.notes,
+      sources: s.sources,
+    })),
+  };
+}
+
+function ProjectsPage() {
+  const navigate = useNavigate();
+  return (
+    <div className="min-h-screen bg-[#f3f3f3]">
+      <ProjectsSection
+        onBack={() => navigate('/')}
+        onOpenProject={(id) => navigate('/', { state: { openProjectId: id } })}
+      />
+    </div>
+  );
+}
+
+export function MainFlow() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState<AppStep>('home');
+  const [projectId, setProjectId] = useState<number | null>(null);
   const [inputData, setInputData] = useState<{ type: 'topic' | 'document'; content: string } | null>(null);
   const [outlineData, setOutlineData] = useState<OutlineData | null>(null);
   const [finalSlides, setFinalSlides] = useState<SlideData[] | null>(null);
-  const [systemConfig, setSystemConfig] = useState<SystemConfig | null>(null);
-
-  useEffect(() => {
-    const loadConfig = async () => {
-      try {
-        const config = await fetchSystemConfig();
-        setSystemConfig(config);
-      } catch (error) {
-        console.error('Failed to load system config:', error);
-      }
-    };
-
-    loadConfig();
-  }, []);
 
   const handleStart = () => {
     setCurrentStep('input');
   };
 
-  const handleInputSubmit = async (type: 'topic' | 'document', content: string) => {
-    setInputData({ type, content });
+  const handleInputSubmit = async (
+    type: 'topic' | 'document',
+    content: string,
+    meta?: { fileName?: string; formData?: FormData },
+  ) => {
     try {
       if (type === 'topic') {
+        setInputData({ type, content });
         const result = await createProjectFromTopic(content);
-        setOutlineData({ title: result.title, slides: result.slides });
+        setProjectId(result.projectId);
+        setOutlineData(mapOutlineResponse(result));
+      } else if (meta?.formData) {
+        const result = await uploadDocumentFile(meta.formData);
+        setProjectId(result.projectId);
+        setOutlineData(mapOutlineResponse(result));
+        setInputData({
+          type: 'document',
+          content: result.title || meta.fileName?.replace(/\.[^/.]+$/, '') || '文档',
+        });
       } else {
-        const outline = await generateOutline({ type, content }, systemConfig ?? defaultSystemConfig);
-        setOutlineData(outline);
+        setInputData({ type, content });
+        const docTitle = meta?.fileName?.replace(/\.[^/.]+$/, '') || '上传文档';
+        const result = await createProjectFromDocument(docTitle, content);
+        setProjectId(result.projectId);
+        setOutlineData(mapOutlineResponse(result));
       }
       setCurrentStep('outline');
     } catch (error) {
       console.error('Error generating outline:', error);
-      alert(`生成大纲失败，请重试：${error instanceof Error ? error.message : '未知错误'}`);
     }
   };
 
   const handleOutlineConfirm = async (slides: SlideData[]) => {
-    setOutlineData(prev => prev ? { ...prev, slides } : null);
+    if (!projectId || !outlineData) {
+      alert('缺少项目上下文，请返回重新输入。');
+      return;
+    }
+    setOutlineData((prev) => (prev ? { ...prev, slides } : null));
     try {
-      const slidesWithContent: SlideData[] = [];
-      for (const slide of slides) {
-        const content = await generateSlideContent({
-          slideTitle: slide.title,
-          inputType: inputData?.type || 'topic',
-          inputContent: inputData?.content || '',
-        }, systemConfig ?? defaultSystemConfig);
-        slidesWithContent.push({
-          ...slide,
-          content: content.content,
-          notes: content.notes,
-        });
-      }
-      setFinalSlides(slidesWithContent);
+      await syncProjectOutline(
+        projectId,
+        buildOutlinePayload(outlineData.title, inputData?.content ?? outlineData.title, slides),
+      );
+      const detail = await generateSlideContents(projectId, {
+        inputType: inputData?.type ?? 'topic',
+        inputContent: inputData?.content ?? '',
+      });
+      setFinalSlides(mapDetailToSlides(detail));
       setCurrentStep('content');
     } catch (error) {
       console.error('Error generating content:', error);
-      alert(`生成内容失败，请重试：${error instanceof Error ? error.message : '未知错误'}`);
     }
   };
 
@@ -108,12 +179,13 @@ function App() {
     setCurrentStep('preview');
   };
 
-  const handleReset = () => {
+  const handleReset = useCallback(() => {
     setCurrentStep('home');
+    setProjectId(null);
     setInputData(null);
     setOutlineData(null);
     setFinalSlides(null);
-  };
+  }, []);
 
   const handleShowEvaluations = () => {
     setCurrentStep('evaluation');
@@ -123,49 +195,105 @@ function App() {
     setCurrentStep('config');
   };
 
-  const handleConfigSave = (config: SystemConfig) => {
-    setSystemConfig(config);
+  const handleShowProjects = () => {
+    setCurrentStep('projects');
   };
+
+  const handleOpenProject = useCallback(async (id: number) => {
+    try {
+      const detail = await fetchProject(id);
+      setProjectId(id);
+      setInputData({ type: 'topic', content: detail.theme });
+      setOutlineData({
+        title: detail.title,
+        slides: mapDetailToSlides(detail).map((s) => ({
+          ...s,
+          content: s.content.length ? s.content : ['（待编辑要点）'],
+        })),
+      });
+      const hasContent = detail.slides.some((s) => (s.bullets?.length ?? 0) > 0 || (s.body?.length ?? 0) > 0);
+      if (hasContent) {
+        setFinalSlides(mapDetailToSlides(detail));
+      } else {
+        setFinalSlides(null);
+      }
+      setCurrentStep('outline');
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  useEffect(() => {
+    const st = (location.state ?? null) as {
+      resetMainFlow?: number;
+      openProjectId?: number;
+    } | null;
+
+    if (st?.resetMainFlow != null) {
+      handleReset();
+      navigate(location.pathname, { replace: true, state: {} });
+      return;
+    }
+
+    const id = st?.openProjectId;
+    if (id == null || !Number.isFinite(id)) return;
+
+    let cancelled = false;
+    void (async () => {
+      await handleOpenProject(id);
+      if (!cancelled) {
+        navigate(location.pathname, { replace: true, state: {} });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [location.state, location.pathname, handleOpenProject, handleReset, navigate]);
 
   return (
     <div className="min-h-screen bg-[#f3f3f3]">
-      <Navbar 
-        currentStep={currentStep} 
+      <Navbar
+        currentStep={currentStep}
         onNavigate={setCurrentStep}
         onReset={handleReset}
         onOpenConfig={handleShowConfig}
       />
-      
+
       {currentStep === 'home' && (
         <Hero
           onStart={handleStart}
           onShowEvaluations={handleShowEvaluations}
           onShowConfig={handleShowConfig}
+          onShowProjects={handleShowProjects}
         />
       )}
-      
-      {currentStep === 'input' && (
-        <InputSection onSubmit={handleInputSubmit} />
-      )}
-      
+
+      {currentStep === 'input' && <InputSection onSubmit={handleInputSubmit} />}
+
       {currentStep === 'outline' && outlineData && (
-        <OutlineSection 
-          outline={outlineData} 
+        <OutlineSection
+          key={projectId ?? 'new'}
+          projectId={projectId}
+          outline={outlineData}
           onConfirm={handleOutlineConfirm}
           onBack={() => setCurrentStep('input')}
         />
       )}
-      
-      {currentStep === 'content' && finalSlides && (
-        <ContentSection 
+
+      {currentStep === 'content' && finalSlides && projectId !== null && (
+        <ContentSection
+          projectId={projectId}
           slides={finalSlides}
+          inputType={inputData?.type ?? 'topic'}
+          inputContent={inputData?.content ?? ''}
           onConfirm={handleContentConfirm}
           onBack={() => setCurrentStep('outline')}
         />
       )}
-      
+
       {currentStep === 'preview' && finalSlides && (
-        <PreviewSection 
+        <PreviewSection
+          projectId={projectId}
           slides={finalSlides}
           title={outlineData?.title || 'PPT演示文稿'}
           onReset={handleReset}
@@ -174,16 +302,33 @@ function App() {
       )}
 
       {currentStep === 'evaluation' && (
-        <EvaluationSection />
+        <EvaluationSection defaultProjectId={projectId} />
       )}
 
       {currentStep === 'config' && (
-        <SystemConfigSection onBack={() => setCurrentStep('home')} onSave={handleConfigSave} />
+        <SystemConfigSection onBack={() => setCurrentStep('home')} onSave={(_config: SystemConfig) => {}} />
       )}
-      
+
+      {currentStep === 'projects' && (
+        <ProjectsSection onOpenProject={handleOpenProject} onBack={() => setCurrentStep('home')} />
+      )}
+
       {currentStep === 'home' && <Footer />}
     </div>
   );
 }
 
-export default App;
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Toaster position="top-center" richColors />
+      <Routes>
+        <Route path="/" element={<MainFlow />} />
+        <Route path="/projects" element={<ProjectsPage />} />
+        <Route path="/knowledge" element={<KnowledgeSearchPage />} />
+        <Route path="/project/:projectId/slide/:slideId" element={<SlideDetailView />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </BrowserRouter>
+  );
+}

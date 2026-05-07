@@ -22,7 +22,7 @@ const Navbar = ({ currentStep, onNavigate, onReset, onOpenConfig }: NavbarProps)
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  const isInWorkflow = currentStep !== 'home';
+  const isInWorkflow = ['input', 'outline', 'content', 'preview'].includes(currentStep);
 
   const workflowSteps = [
     { key: 'input', label: '输入', number: 1 },

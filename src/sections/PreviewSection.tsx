@@ -1,33 +1,72 @@
 import { useEffect, useState } from 'react';
 import { FileText, ArrowLeft, RotateCcw, ChevronLeft, ChevronRight, Presentation } from 'lucide-react';
+import { FlowExitNav } from '@/components/FlowExitNav';
 import { Button } from '@/components/ui/button';
-import { loadExternalSources, searchExternalSources, type ExternalSourceDocument } from '@/lib/backend';
+import {
+  fetchProject,
+  loadExternalSources,
+  searchExternalSources,
+  type EvaluationReport,
+  type ExternalSourceDocument,
+} from '@/lib/backend';
 import type { SlideData } from '../App';
 
 interface PreviewSectionProps {
+  projectId?: number | null;
   slides: SlideData[];
   title: string;
   onReset: () => void;
   onBack: () => void;
 }
 
-const PreviewSection = ({ slides, title, onReset, onBack }: PreviewSectionProps) => {
+const PreviewSection = ({ projectId, slides, title, onReset, onBack }: PreviewSectionProps) => {
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [viewMode, setViewMode] = useState<'preview' | 'list'>('preview');
   const [externalDocs, setExternalDocs] = useState<ExternalSourceDocument[]>([]);
   const [isExternalLoading, setIsExternalLoading] = useState(false);
   const [externalLoadStatus, setExternalLoadStatus] = useState('');
+  const [latestEval, setLatestEval] = useState<EvaluationReport | null>(null);
 
   const currentSlide = slides[currentSlideIndex];
 
+  useEffect(() => {
+    if (projectId == null) {
+      setLatestEval(null);
+      return;
+    }
+    let cancelled = false;
+    fetchProject(projectId)
+      .then((detail) => {
+        if (cancelled) return;
+        const evs = detail.evaluations ?? [];
+        setLatestEval(evs.length > 0 ? evs[0] : null);
+      })
+      .catch(() => {
+        if (!cancelled) setLatestEval(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
   const handleDownloadMarkdown = () => {
     let markdown = `# ${title}\n\n`;
+    if (projectId != null) {
+      markdown += `_项目 ID：${projectId}_\n\n`;
+    }
     slides.forEach((slide, index) => {
       markdown += `## ${index + 1}. ${slide.title}\n\n`;
       slide.content.forEach(item => {
         markdown += `- ${item}\n`;
       });
-      markdown += `\n**演讲备注：** ${slide.notes}\n\n---\n\n`;
+      markdown += `\n**演讲备注：** ${slide.notes}\n`;
+      if (slide.sources?.length) {
+        markdown += `\n**引用来源：**\n`;
+        slide.sources.forEach((s) => {
+          markdown += `- ${s}\n`;
+        });
+      }
+      markdown += `\n---\n\n`;
     });
 
     const blob = new Blob([markdown], { type: 'text/markdown' });
@@ -58,9 +97,13 @@ const PreviewSection = ({ slides, title, onReset, onBack }: PreviewSectionProps)
   }, [title]);
 
   const handleLoadExternalSourcesToIndex = async () => {
+    if (projectId == null) {
+      setExternalLoadStatus('请先完成创建流程以获取项目 ID，再索引外部文档。');
+      return;
+    }
     setExternalLoadStatus('loading');
     try {
-      const count = await loadExternalSources(title, 0, 3);
+      const count = await loadExternalSources(title, projectId, 3);
       setExternalLoadStatus(`已索引 ${count} 条外部文档到本地向量库。`);
     } catch (error) {
       console.error('Failed to index external sources:', error);
@@ -72,6 +115,7 @@ const PreviewSection = ({ slides, title, onReset, onBack }: PreviewSectionProps)
     <section className="min-h-screen pt-24 pb-16 bg-[#f3f3f3]">
       <div className="section-container">
         <div className="section-inner max-w-6xl">
+          <FlowExitNav className="mb-4" />
           {/* Header */}
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
             <div>
@@ -81,6 +125,25 @@ const PreviewSection = ({ slides, title, onReset, onBack }: PreviewSectionProps)
               <p className="text-[#1f1f1f]/60">
                 共 {slides.length} 页：{title}
               </p>
+              {latestEval && (
+                <p className="text-sm text-[#1f1f1f]/70 mt-2">
+                  自动总分{' '}
+                  <span className="font-semibold text-[#3898ec]">
+                    {latestEval.autoTotalScore != null
+                      ? `${(latestEval.autoTotalScore / 20).toFixed(1)}/5`
+                      : '—'}
+                  </span>
+                  {latestEval.factVerificationRate != null && (
+                    <>
+                      {' '}
+                      · 事实核验率{' '}
+                      <span className="font-semibold text-[#1f6b2e]">
+                        {(latestEval.factVerificationRate * 100).toFixed(0)}%
+                      </span>
+                    </>
+                  )}
+                </p>
+              )}
             </div>
             <div className="flex items-center gap-3">
               <Button

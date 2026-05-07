@@ -1,6 +1,7 @@
 package com.example.pptbackend.controller;
 
 import com.example.pptbackend.dto.CreateEvaluationReportRequest;
+import com.example.pptbackend.dto.EvaluationCalibrationRequest;
 import com.example.pptbackend.dto.EvaluationReportResponse;
 import com.example.pptbackend.service.EvaluationReportService;
 import jakarta.persistence.EntityNotFoundException;
@@ -39,6 +40,17 @@ public class EvaluationReportController {
     public ResponseEntity<List<EvaluationReportResponse>> getEvaluations(@PathVariable("projectId") Long projectId) {
         List<EvaluationReportResponse> reports = evaluationReportService.getReportsForProject(projectId);
         return ResponseEntity.ok(reports);
+    }
+
+    /** 拇指校准：对齐自动启发式分项或记录不认同 */
+    @PostMapping("/calibrate")
+    public ResponseEntity<Long> calibrate(@PathVariable("projectId") Long projectId,
+                                          @RequestBody EvaluationCalibrationRequest request) {
+        Long id = evaluationReportService.createCalibrationReport(
+            projectId,
+            request.isAgreeWithAuto(),
+            request.getNote());
+        return ResponseEntity.status(HttpStatus.CREATED).body(id);
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

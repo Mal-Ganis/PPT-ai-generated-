@@ -18,34 +18,35 @@ public class SystemConfig {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false)
+    @Column(name = "llm_model", nullable = false)
     private String llmModel;
 
     @Column(nullable = false)
     private Double temperature;
 
-    @Column(nullable = false)
+    @Column(name = "max_tokens", nullable = false)
     private Integer maxTokens;
 
-    @Column(nullable = false)
+    /** DB column is top_p; Hibernate would otherwise map topP → topp and leave top_p null. */
+    @Column(name = "top_p", nullable = false)
     private Double topP;
 
-    @Column(nullable = false)
+    @Column(name = "top_k", nullable = false)
     private Integer topK;
 
-    @Column(nullable = false)
+    @Column(name = "retrieval_limit", nullable = false)
     private Integer retrievalLimit;
 
-    @Column(columnDefinition = "TEXT")
+    @Column(name = "outline_prompt_template", columnDefinition = "TEXT")
     private String outlinePromptTemplate;
 
-    @Column(columnDefinition = "TEXT")
+    @Column(name = "slide_prompt_template", columnDefinition = "TEXT")
     private String slidePromptTemplate;
 
-    @Column(nullable = false, updatable = false)
+    @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
-    @Column(nullable = false)
+    @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
     public Long getId() {
