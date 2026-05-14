@@ -43,7 +43,8 @@ export interface SlideData {
   chapter?: string;
   title: string;
   content: string[];
-  notes: string;
+  /** @deprecated 已不再生成；保留字段仅为兼容旧数据 */
+  notes?: string;
   sources?: string[];
 }
 
@@ -56,12 +57,11 @@ function mapOutlineResponse(outline: ProjectOutlineResponse): OutlineData {
   return {
     title: outline.title,
     slides: outline.slides.map((s) => ({
-      id: s.id,
-      slideId: s.slideId,
+      id: s.slideId != null ? Number(s.slideId) : s.id,
+      slideId: s.slideId != null ? Number(s.slideId) : undefined,
       chapter: s.chapter,
       title: s.title,
       content: [...s.content],
-      notes: s.notes,
     })),
   };
 }
@@ -70,12 +70,11 @@ function mapDetailToSlides(detail: ProjectDetailResponse): SlideData[] {
   return [...detail.slides]
     .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
     .map((s) => ({
-      id: s.position ?? s.id,
+      id: s.id,
       slideId: s.id,
       chapter: s.chapter ?? undefined,
       title: s.title,
       content: s.bullets && s.bullets.length > 0 ? [...s.bullets] : s.body ? [s.body] : [],
-      notes: s.notes ?? '',
       sources: s.sources,
     }));
 }
@@ -89,7 +88,6 @@ function buildOutlinePayload(title: string, theme: string, slides: SlideData[]):
       chapter: s.chapter,
       title: s.title,
       bullets: s.content,
-      notes: s.notes,
       sources: s.sources,
     })),
   };

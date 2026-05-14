@@ -59,7 +59,6 @@ const PreviewSection = ({ projectId, slides, title, onReset, onBack }: PreviewSe
       slide.content.forEach(item => {
         markdown += `- ${item}\n`;
       });
-      markdown += `\n**演讲备注：** ${slide.notes}\n`;
       if (slide.sources?.length) {
         markdown += `\n**引用来源：**\n`;
         slide.sources.forEach((s) => {
@@ -259,7 +258,7 @@ const PreviewSection = ({ projectId, slides, title, onReset, onBack }: PreviewSe
               <div className="lg:col-span-1 space-y-2 max-h-[600px] overflow-y-auto">
                 {slides.map((slide, index) => (
                   <button
-                    key={slide.id}
+                    key={slide.slideId ?? slide.id}
                     onClick={() => setCurrentSlideIndex(index)}
                     className={`w-full text-left p-3 rounded-xl transition-all duration-300 ${
                       index === currentSlideIndex
@@ -323,18 +322,13 @@ const PreviewSection = ({ projectId, slides, title, onReset, onBack }: PreviewSe
                   </div>
                 </div>
 
-                {/* Speaker Notes */}
-                <div className="mt-4 bg-[#fff9e6] rounded-xl p-4">
-                  <h4 className="text-sm font-medium text-[#f4b70d] mb-2">演讲备注</h4>
-                  <p className="text-sm text-[#1f1f1f]/70">{currentSlide.notes}</p>
-                </div>
               </div>
             </div>
           ) : (
             <div className="bg-white rounded-2xl shadow-lg p-6">
               <div className="space-y-6">
                 {slides.map((slide, index) => (
-                  <div key={slide.id} className="border-b border-gray-200 last:border-0 pb-6 last:pb-0">
+                  <div key={slide.slideId ?? slide.id} className="border-b border-gray-200 last:border-0 pb-6 last:pb-0">
                     <div className="flex items-start gap-4">
                       <span className="w-8 h-8 bg-[#3898ec]/10 text-[#3898ec] rounded-full flex items-center justify-center text-sm font-medium flex-shrink-0">
                         {index + 1}
@@ -349,9 +343,6 @@ const PreviewSection = ({ projectId, slides, title, onReset, onBack }: PreviewSe
                             </li>
                           ))}
                         </ul>
-                        <p className="mt-3 text-sm text-[#1f1f1f]/50">
-                          <span className="font-medium">备注：</span>{slide.notes}
-                        </p>
                       </div>
                     </div>
                   </div>

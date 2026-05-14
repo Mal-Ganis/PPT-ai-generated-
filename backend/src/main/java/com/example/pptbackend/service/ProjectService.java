@@ -18,6 +18,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -36,14 +38,15 @@ public class ProjectService {
     private final DocumentIndexingService documentIndexingService;
     private final OutlineGenerationService outlineGenerationService;
     private final ExternalKnowledgeSourceService externalKnowledgeSourceService;
+    private final DeferredProjectExternalIndexService deferredProjectExternalIndexService;
 
     @Value("${outline.use-external-retrieval:true}")
     private boolean outlineUseExternalRetrieval;
 
-    @Value("${outline.external-snippet-max-chars:6000}")
+    @Value("${outline.external-snippet-max-chars:4800}")
     private int outlineExternalSnippetMaxChars;
 
-    @Value("${outline.external-result-limit:8}")
+    @Value("${outline.external-result-limit:6}")
     private int outlineExternalResultLimit;
 
     public ProjectService(ProjectRepository projectRepository,
@@ -51,13 +54,15 @@ public class ProjectService {
                           EvaluationReportService evaluationReportService,
                           DocumentIndexingService documentIndexingService,
                           OutlineGenerationService outlineGenerationService,
-                          ExternalKnowledgeSourceService externalKnowledgeSourceService) {
+                          ExternalKnowledgeSourceService externalKnowledgeSourceService,
+                          DeferredProjectExternalIndexService deferredProjectExternalIndexService) {
         this.projectRepository = projectRepository;
         this.slideRepository = slideRepository;
         this.evaluationReportService = evaluationReportService;
         this.documentIndexingService = documentIndexingService;
         this.outlineGenerationService = outlineGenerationService;
         this.externalKnowledgeSourceService = externalKnowledgeSourceService;
+        this.deferredProjectExternalIndexService = deferredProjectExternalIndexService;
     }
 
     @Transactional
@@ -74,11 +79,14 @@ public class ProjectService {
                 List<ExternalSourceDocument> docs =
                     externalKnowledgeSourceService.searchExternalSources(clean, outlineExternalResultLimit);
                 if (!docs.isEmpty()) {
-                    int indexed = externalKnowledgeSourceService.indexDocumentsIntoProject(projectId, docs);
-                    log.info("Outline phase: indexed {} external snippets for project {}", indexed, projectId);
                     augmented = clean + "\n\n"
                         + externalKnowledgeSourceService.formatDocumentsForOutlinePrompt(
                             docs, outlineExternalSnippetMaxChars);
+                    scheduleExternalSnippetIndexAfterCommit(projectId, docs);
+                    log.info(
+                        "Outline phase: scheduled deferred vector index for {} external snippets, project {}",
+                        docs.size(),
+                        projectId);
                 } else {
                     log.info(
                         "Outline phase: external retrieval returned no documents (configure TAVILY_API_KEY for Tavily)");
@@ -181,10 +189,14 @@ public class ProjectService {
                 List<ExternalSourceDocument> docs =
                     externalKnowledgeSourceService.searchExternalSources(safeTitle, outlineExternalResultLimit);
                 if (!docs.isEmpty()) {
-                    externalKnowledgeSourceService.indexDocumentsIntoProject(projectId, docs);
                     augmented = augmented + "\n\n【权威检索补充】\n"
                         + externalKnowledgeSourceService.formatDocumentsForOutlinePrompt(
                             docs, outlineExternalSnippetMaxChars);
+                    scheduleExternalSnippetIndexAfterCommit(projectId, docs);
+                    log.info(
+                        "Document outline: scheduled deferred vector index for {} external snippets, project {}",
+                        docs.size(),
+                        projectId);
                 }
             } catch (Exception e) {
                 log.warn("Document flow: external supplement failed: {}", e.getMessage());
@@ -303,6 +315,27 @@ public class ProjectService {
         item.setSources(slide.getSources());
         item.setNotes(slide.getNotes());
         return item;
+    }
+
+    /**
+     * 事务成功提交后再异步写入检索片段，避免阻塞大纲响应；列表做快照以免调用方后续修改。
+     */
+    private void scheduleExternalSnippetIndexAfterCommit(Long projectId, List<ExternalSourceDocument> docs) {
+        if (projectId == null || docs == null || docs.isEmpty()) {
+            return;
+        }
+        List<ExternalSourceDocument> snapshot = List.copyOf(docs);
+        Runnable run = () -> deferredProjectExternalIndexService.indexExternalDocumentsForProject(projectId, snapshot);
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    run.run();
+                }
+            });
+        } else {
+            run.run();
+        }
     }
 
     private String truncate(String value, int maxLength) {

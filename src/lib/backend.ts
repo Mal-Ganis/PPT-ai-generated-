@@ -13,21 +13,46 @@ function normalizeBackendOrigin(base: string): string {
   return b || 'http://localhost:8080';
 }
 
+/** 一般 API：大纲创建、配置等 */
+const DEFAULT_AXIOS_TIMEOUT_MS = 360_000;
+
+/**
+ * 多页顺序调用大模型 + 自动评估 + 自评修订（tier1/tier2 可能整批重跑），总时长常达十余分钟。
+ * 须大于：页数 ×（单次补全上限 + 重试）× 修订轮次。
+ */
+const SLIDE_PIPELINE_AXIOS_TIMEOUT_MS = 1_800_000;
+
+/** 从 Spring 返回的 JSON 或纯文本 body 中取出 message */
+function extractAxiosErrorMessage(err: unknown): string {
+  const ax = err as {
+    response?: { status?: number; data?: unknown };
+    message?: string;
+  };
+  const data = ax.response?.data;
+  if (typeof data === 'string' && data.trim()) {
+    return data.trim();
+  }
+  if (data && typeof data === 'object' && data !== null && 'message' in data) {
+    const m = (data as { message?: unknown }).message;
+    if (m != null && String(m).trim()) {
+      return String(m).trim();
+    }
+  }
+  return ax.message ?? '请求失败';
+}
+
 const backendApi = axios.create({
   baseURL: normalizeBackendOrigin(import.meta.env.VITE_API_BASE ?? 'http://localhost:8080'),
-  timeout: 120000,
+  timeout: DEFAULT_AXIOS_TIMEOUT_MS,
 });
 
 backendApi.interceptors.response.use(
   (r) => r,
   (err: unknown) => {
-    const ax = err as { response?: { status?: number; data?: { message?: string } }; message?: string };
-    const status = ax.response?.status;
-    const msg = ax.response?.data?.message ?? ax.message ?? '请求失败';
-    if (!status || status >= 500) {
-      toast.error(String(msg));
-    } else if (status === 503 || status === 502) {
-      toast.error(String(msg));
+    const ax = err as { response?: { status?: number } };
+    const msg = extractAxiosErrorMessage(err);
+    if (ax.response) {
+      toast.error(msg);
     }
     return Promise.reject(err);
   },
@@ -82,7 +107,8 @@ export interface OutlineSlideDto {
   chapter?: string;
   title: string;
   content: string[];
-  notes: string;
+  /** 大纲级备注（可选）；正文阶段不再生成幻灯片演讲备注 */
+  notes?: string;
 }
 
 export interface ProjectOutlineResponse {
@@ -140,7 +166,7 @@ export interface GenerateSlidesPayload {
 
 export interface SlideContentResponse {
   content: string[];
-  notes: string;
+  notes?: string;
   sources?: string[];
 }
 
@@ -241,7 +267,9 @@ export const createProjectFromDocument = async (
 
 /** PDF/DOCX/TXT 服务端解析后生成项目（multipart/form-data） */
 export const uploadDocumentFile = async (formData: FormData): Promise<ProjectOutlineResponse> => {
-  const response = await backendApi.post<ProjectOutlineResponse>('/api/projects/document/upload', formData);
+  const response = await backendApi.post<ProjectOutlineResponse>('/api/projects/document/upload', formData, {
+    timeout: SLIDE_PIPELINE_AXIOS_TIMEOUT_MS,
+  });
   return response.data;
 };
 
@@ -281,6 +309,7 @@ export const generateSlideContents = async (
   const response = await backendApi.post<ProjectDetailResponse>(
     `/api/projects/${projectId}/slides/generate`,
     payload,
+    { timeout: SLIDE_PIPELINE_AXIOS_TIMEOUT_MS },
   );
   return response.data;
 };
@@ -293,6 +322,7 @@ export const regenerateSlide = async (
   const response = await backendApi.post<SlideContentResponse>(
     `/api/projects/${projectId}/slides/${slideId}/regenerate`,
     payload,
+    { timeout: SLIDE_PIPELINE_AXIOS_TIMEOUT_MS },
   );
   return response.data;
 };

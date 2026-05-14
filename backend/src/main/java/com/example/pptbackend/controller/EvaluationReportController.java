@@ -4,11 +4,9 @@ import com.example.pptbackend.dto.CreateEvaluationReportRequest;
 import com.example.pptbackend.dto.EvaluationCalibrationRequest;
 import com.example.pptbackend.dto.EvaluationReportResponse;
 import com.example.pptbackend.service.EvaluationReportService;
-import jakarta.persistence.EntityNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
-import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -19,7 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/projects/{projectId}/evaluations")
+@RequestMapping("/api/projects/{projectId:\\d+}/evaluations")
 @CrossOrigin(origins = "http://localhost:5173")
 public class EvaluationReportController {
 
@@ -51,15 +49,5 @@ public class EvaluationReportController {
             request.isAgreeWithAuto(),
             request.getNote());
         return ResponseEntity.status(HttpStatus.CREATED).body(id);
-    }
-
-    @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<String> handleBadRequest(IllegalArgumentException exception) {
-        return ResponseEntity.badRequest().body(exception.getMessage());
-    }
-
-    @ExceptionHandler(EntityNotFoundException.class)
-    public ResponseEntity<String> handleNotFound(EntityNotFoundException exception) {
-        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(exception.getMessage());
     }
 }

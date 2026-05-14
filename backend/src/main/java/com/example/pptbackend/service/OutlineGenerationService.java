@@ -5,11 +5,14 @@ import com.example.pptbackend.dto.SystemConfigDto;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -20,6 +23,8 @@ import java.util.regex.Pattern;
 
 @Service
 public class OutlineGenerationService {
+
+    private static final Logger log = LoggerFactory.getLogger(OutlineGenerationService.class);
 
     private static final Pattern JSON_FENCE = Pattern.compile("```(?:json)?\\s*([\\s\\S]*?)```", Pattern.CASE_INSENSITIVE);
 
@@ -34,7 +39,7 @@ public class OutlineGenerationService {
     public OutlineGenerationService(ObjectMapper objectMapper,
                                     SystemConfigService systemConfigService,
                                     DeepseekChatClient deepseekChatClient,
-                                    @Value("${outline.max-tokens:2048}") int outlineMaxTokens) {
+                                    @Value("${outline.max-tokens:4096}") int outlineMaxTokens) {
         this.objectMapper = objectMapper;
         this.systemConfigService = systemConfigService;
         this.deepseekChatClient = deepseekChatClient;
@@ -56,24 +61,112 @@ public class OutlineGenerationService {
         String responseText = deepseekChatClient.chatCompletions(body, Duration.ofSeconds(120));
         try {
             ProjectOutlineResponse parsed = parseOutlineResponse(responseText);
-            return validateAndNormalizeOutline(parsed);
+            ProjectOutlineResponse withCover = ensureCoverAndTableOfContents(parsed, topicAndRetrieval[0]);
+            ProjectOutlineResponse normalized = validateAndNormalizeOutline(withCover);
+            if (normalized.getSlides() == null || normalized.getSlides().isEmpty()) {
+                throw new IllegalStateException("outline_json_has_no_slides");
+            }
+            return normalized;
         } catch (Exception e) {
             String assistant = extractAssistantContent(responseText);
             if (assistant != null) {
                 try {
-                    return validateAndNormalizeOutline(parseOutlineFromAssistantJson(assistant));
-                } catch (Exception ignored) {
-                    String fenced = stripMarkdownFence(assistant);
-                    try {
-                        ProjectOutlineResponse pr = parseOutlineJsonObject(fenced);
-                        return validateAndNormalizeOutline(pr);
-                    } catch (Exception ignored2) {
-                        // fall through to degraded
+                    ProjectOutlineResponse recovered = parseOutlineFromAssistantJson(assistant);
+                    ProjectOutlineResponse withCover = ensureCoverAndTableOfContents(recovered, topicAndRetrieval[0]);
+                    ProjectOutlineResponse normalized = validateAndNormalizeOutline(withCover);
+                    if (normalized.getSlides() == null || normalized.getSlides().isEmpty()) {
+                        throw new IllegalStateException("outline_json_has_no_slides");
                     }
+                    return normalized;
+                } catch (Exception ignored) {
+                    // 已由 parseOutlineFromAssistantJson 内部尝试围栏与括号截取
                 }
             }
-            return degradedOutline(topic != null ? topic : "");
+            String raw = topic != null ? topic : "";
+            String[] parts = splitTopicAndRetrieval(raw);
+            log.warn("Outline JSON parse failed; degraded outline. Cause: {}", e.getMessage());
+            ProjectOutlineResponse degraded = degradedOutline(parts[0], parts[1]);
+            return validateAndNormalizeOutline(ensureCoverAndTableOfContents(degraded, parts[0]));
         }
+    }
+
+    /**
+     * 保证大纲前两条为「封面」「目录」（若模型未输出则自动插入，后续页顺延）。
+     */
+    public ProjectOutlineResponse ensureCoverAndTableOfContents(ProjectOutlineResponse outline, String themeLine) {
+        if (outline == null) {
+            return null;
+        }
+        if (outline.getSlides() == null) {
+            outline.setSlides(new ArrayList<>());
+        }
+        List<ProjectOutlineResponse.OutlineSlide> slides = outline.getSlides();
+        String deckTitle = outline.getTitle() != null && !outline.getTitle().isBlank()
+            ? outline.getTitle().trim()
+            : firstLine(themeLine != null ? themeLine : "演示文稿");
+
+        boolean hasCover = !slides.isEmpty() && looksLikeCoverSlide(slides.get(0));
+        if (!hasCover) {
+            ProjectOutlineResponse.OutlineSlide cover = new ProjectOutlineResponse.OutlineSlide();
+            cover.setTitle("封面");
+            cover.setChapter(null);
+            cover.setContent(new String[]{
+                "主标题：" + deckTitle,
+                "副标题：用一句话点出听众收益或矛盾（可改）",
+                "汇报信息：单位 / 姓名 / 日期（请在现场填写）"
+            });
+            cover.setNotes("10–20 秒开场：自报家门 + 今天讲什么 + 为什么值得听。");
+            slides.add(0, cover);
+        }
+
+        boolean hasToc = slides.size() >= 2 && looksLikeTocSlide(slides.get(1));
+        if (!hasToc) {
+            List<String> tocPoints = new ArrayList<>();
+            int n = 1;
+            for (int i = 2; i < slides.size() && tocPoints.size() < 12; i++) {
+                ProjectOutlineResponse.OutlineSlide s = slides.get(i);
+                String t = s.getTitle();
+                if (t != null && !t.trim().isEmpty()) {
+                    tocPoints.add(n + "）" + t.trim());
+                    n++;
+                }
+            }
+            if (tocPoints.isEmpty()) {
+                tocPoints.add("1）后续各页将在确认大纲后由系统生成正文");
+            }
+            ProjectOutlineResponse.OutlineSlide toc = new ProjectOutlineResponse.OutlineSlide();
+            toc.setTitle("目录");
+            toc.setChapter(null);
+            toc.setContent(tocPoints.toArray(new String[0]));
+            toc.setNotes("20–40 秒：用口语串一下路线图，用手指或动画指向下文，不要逐字念完所有标题。");
+            slides.add(1, toc);
+        }
+        return outline;
+    }
+
+    private static String firstLine(String text) {
+        if (text == null) {
+            return "演示文稿";
+        }
+        int p = text.indexOf('\n');
+        String line = (p > 0 ? text.substring(0, p) : text).trim();
+        return line.isEmpty() ? "演示文稿" : line;
+    }
+
+    private static boolean looksLikeCoverSlide(ProjectOutlineResponse.OutlineSlide s) {
+        if (s == null || s.getTitle() == null) {
+            return false;
+        }
+        String t = s.getTitle();
+        return t.contains("封面") || t.contains("扉页") || t.matches("(?i).*\\bcover\\b.*");
+    }
+
+    private static boolean looksLikeTocSlide(ProjectOutlineResponse.OutlineSlide s) {
+        if (s == null || s.getTitle() == null) {
+            return false;
+        }
+        String t = s.getTitle();
+        return t.contains("目录") || t.contains("目次") || t.matches("(?i).*(contents|agenda).*");
     }
 
     /**
@@ -141,11 +234,17 @@ public class OutlineGenerationService {
     private String buildOutlineRequestBody(String prompt, SystemConfigDto config) {
         Map<String, Object> payload = new HashMap<>();
         payload.put("model", config.getLlmModel());
-        payload.put("messages", List.of(Map.of("role", "user", "content", prompt)));
+        String system = """
+            你是一个只输出 JSON 的接口后端。严格遵守：回复正文必须是**单个合法 JSON 对象**，首字符为 {、末字符为 }；禁止 Markdown 围栏、禁止 JSON 以外的任何说明或思考过程。
+            """.trim();
+        payload.put("messages", List.of(
+            Map.of("role", "system", "content", system),
+            Map.of("role", "user", "content", prompt)));
         payload.put("temperature", config.getTemperature());
         payload.put("max_tokens", outlineMaxTokens);
         payload.put("top_p", config.getTopP());
         payload.put("top_k", config.getTopK());
+        payload.put("response_format", Map.of("type", "json_object"));
 
         try {
             return objectMapper.writeValueAsString(payload);
@@ -186,9 +285,59 @@ public class OutlineGenerationService {
     }
 
     private ProjectOutlineResponse parseOutlineFromAssistantJson(String content) throws IOException {
-        String trimmed = content.trim();
-        trimmed = stripMarkdownFence(trimmed);
-        return parseOutlineJsonObject(trimmed);
+        String fenced = stripMarkdownFence(content.trim());
+        try {
+            return parseOutlineJsonObject(fenced);
+        } catch (IOException first) {
+            String extracted = extractBalancedJsonObject(fenced);
+            if (extracted != null && !extracted.equals(fenced)) {
+                return parseOutlineJsonObject(extracted);
+            }
+            throw first;
+        }
+    }
+
+    /**
+     * 从模型混排输出中截取第一个顶层 JSON 对象（跳过后缀说明、前缀推理等）。
+     */
+    static String extractBalancedJsonObject(String text) {
+        if (text == null) {
+            return null;
+        }
+        int start = text.indexOf('{');
+        if (start < 0) {
+            return null;
+        }
+        int depth = 0;
+        boolean inString = false;
+        boolean escape = false;
+        for (int i = start; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (escape) {
+                escape = false;
+                continue;
+            }
+            if (c == '\\' && inString) {
+                escape = true;
+                continue;
+            }
+            if (c == '"') {
+                inString = !inString;
+                continue;
+            }
+            if (inString) {
+                continue;
+            }
+            if (c == '{') {
+                depth++;
+            } else if (c == '}') {
+                depth--;
+                if (depth == 0) {
+                    return text.substring(start, i + 1);
+                }
+            }
+        }
+        return null;
     }
 
     private String stripMarkdownFence(String content) {
@@ -280,18 +429,31 @@ public class OutlineGenerationService {
         return outlineSlide;
     }
 
-    private ProjectOutlineResponse degradedOutline(String topicSnippet) {
+    private ProjectOutlineResponse degradedOutline(String contentLine, String retrievedLine) {
         ProjectOutlineResponse response = new ProjectOutlineResponse();
         response.setTitle("大纲（降级生成）");
         ProjectOutlineResponse.OutlineSlide slide = new ProjectOutlineResponse.OutlineSlide();
         slide.setId(1);
         slide.setTitle("主题概要");
-        String snippet = topicSnippet.length() > 800 ? topicSnippet.substring(0, 800) + "…" : topicSnippet;
-        slide.setContent(new String[]{
-            "模型返回无法解析为 JSON，已使用降级大纲。",
-            snippet.isBlank() ? "（无可用主题文本）" : snippet
-        });
-        slide.setNotes("请检查 DEEPSEEK_API_KEY 或网络；也可稍后重试生成。");
+        String c = contentLine != null ? contentLine.trim() : "";
+        if (c.length() > 500) {
+            c = c.substring(0, 500) + "…";
+        }
+        String r = retrievedLine != null ? retrievedLine.trim() : "";
+        if (r.length() > 400) {
+            r = r.substring(0, 400) + "…";
+        }
+        List<String> bullets = new ArrayList<>();
+        bullets.add("模型返回无法解析为 JSON，已使用降级大纲。");
+        bullets.add("建议：系统配置使用 deepseek-chat、大纲 max_tokens 充足；或在系统配置页「恢复默认」后重试。");
+        if (!c.isBlank()) {
+            bullets.add("主题句：" + c);
+        }
+        if (!r.isBlank()) {
+            bullets.add("检索节选：" + r);
+        }
+        slide.setContent(bullets.toArray(new String[0]));
+        slide.setNotes("请检查 DEEPSEEK_API_KEY 与网络；也可稍后重试。");
         response.getSlides().add(slide);
         return response;
     }

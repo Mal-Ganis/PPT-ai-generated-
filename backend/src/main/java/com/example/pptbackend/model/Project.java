@@ -19,14 +19,16 @@ import java.util.List;
 @Table(name = "projects")
 public class Project {
 
+    private static final int MAX_TITLE_THEME_CHARS = 8000;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "TEXT")
     private String title;
 
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "TEXT")
     private String theme;
 
     @Column(nullable = false, updatable = false)
@@ -93,6 +95,7 @@ public class Project {
 
     @PrePersist
     public void prePersist() {
+        clampTitleTheme();
         OffsetDateTime now = OffsetDateTime.now();
         this.createdAt = now;
         this.updatedAt = now;
@@ -100,6 +103,16 @@ public class Project {
 
     @PreUpdate
     public void preUpdate() {
+        clampTitleTheme();
         this.updatedAt = OffsetDateTime.now();
+    }
+
+    private void clampTitleTheme() {
+        if (title != null && title.length() > MAX_TITLE_THEME_CHARS) {
+            title = title.substring(0, MAX_TITLE_THEME_CHARS);
+        }
+        if (theme != null && theme.length() > MAX_TITLE_THEME_CHARS) {
+            theme = theme.substring(0, MAX_TITLE_THEME_CHARS);
+        }
     }
 }

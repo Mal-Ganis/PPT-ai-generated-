@@ -19,7 +19,7 @@ foreach ($topic in $topics) {
     Write-Host "`n--- $topic ---" -ForegroundColor Yellow
 
     $topicPayload = @{ topic = $topic } | ConvertTo-Json -Compress
-    $outline = Invoke-RestMethod -Uri "$BaseUrl/api/projects/topic" -Method Post -Body $topicPayload -ContentType "application/json; charset=utf-8"
+    $outline = Invoke-RestMethod -Uri "$BaseUrl/api/projects/topic" -Method Post -Body $topicPayload -ContentType "application/json; charset=utf-8" -TimeoutSec 360
     $pid = $outline.projectId
     Write-Host "projectId=$pid"
 
@@ -36,7 +36,7 @@ foreach ($topic in $topics) {
         inputContent = $topic
     } | ConvertTo-Json -Compress
     Invoke-RestMethod -Uri "$BaseUrl/api/projects/$pid/slides/generate" -Method Post -Body $genPayload `
-        -ContentType "application/json; charset=utf-8" -TimeoutSec 600 | Out-Null
+        -ContentType "application/json; charset=utf-8" -TimeoutSec 1900 | Out-Null
     Write-Host "slides generated"
 
     $evalPayload = @{

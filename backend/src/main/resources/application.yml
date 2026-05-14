@@ -45,17 +45,24 @@ siliconflow:
 # 大纲：权威检索接入主流程（无 Tavily Key 时维基兜底仍可能命中）
 outline:
   use-external-retrieval: ${OUTLINE_USE_EXTERNAL_RETRIEVAL:true}
-  external-snippet-max-chars: ${OUTLINE_EXTERNAL_SNIPPET_MAX_CHARS:6000}
-  external-result-limit: ${OUTLINE_EXTERNAL_RESULT_LIMIT:8}
-  max-tokens: ${OUTLINE_MAX_TOKENS:2048}
+  external-snippet-max-chars: ${OUTLINE_EXTERNAL_SNIPPET_MAX_CHARS:4800}
+  external-result-limit: ${OUTLINE_EXTERNAL_RESULT_LIMIT:6}
+  max-tokens: ${OUTLINE_MAX_TOKENS:4096}
 
 # 正文生成：token 与 ILF-2 为空时的 Tavily 兜底
 generation:
-  slide-max-tokens: ${GENERATION_SLIDE_MAX_TOKENS:2048}
+  # 略减单页输出 token，加快补全、降低超时概率
+  slide-max-tokens: ${GENERATION_SLIDE_MAX_TOKENS:1536}
   slide-fallback-tavily: ${GENERATION_SLIDE_FALLBACK_TAVILY:true}
-  slide-fallback-result-limit: ${GENERATION_SLIDE_FALLBACK_LIMIT:2}
-  # P3：生成后按自动分多级修订（空白向量库时分数可能仍偏低，可通过阈值关闭）
-  self-correction-enabled: ${GENERATION_SELF_CORRECTION_ENABLED:true}
+  slide-fallback-result-limit: ${GENERATION_SLIDE_FALLBACK_LIMIT:1}
+  # 正文阶段专用模型（与大纲配置的 llmModel 独立）；优先 chat，避免 reasoner 拖长链路
+  slide-model: ${GENERATION_SLIDE_MODEL:deepseek-chat}
+  # 单页向量检索 topK 上限（与系统配置 retrievalLimit 取较小值）
+  slide-retrieval-cap: ${GENERATION_SLIDE_RETRIEVAL_CAP:3}
+  # Tavily 兜底写入 prompt 的摘要最大字符数
+  slide-fallback-snippet-chars: ${GENERATION_SLIDE_FALLBACK_SNIPPET_CHARS:2400}
+  # 关闭自评多级重跑，显著缩短「确认大纲 → 生成正文」总耗时
+  self-correction-enabled: ${GENERATION_SELF_CORRECTION_ENABLED:false}
   self-correction-tier1-auto-below: ${GENERATION_SC_T1_AUTO:76}
   self-correction-tier1-fact-below: ${GENERATION_SC_T1_FACT:0.58}
   self-correction-tier2-auto-below: ${GENERATION_SC_T2_AUTO:70}

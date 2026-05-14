@@ -12,11 +12,9 @@ import com.example.pptbackend.dto.UpdateSlideRequest;
 import com.example.pptbackend.service.DocumentTextExtractionService;
 import com.example.pptbackend.service.ProjectService;
 import com.example.pptbackend.service.SlideGenerationService;
-import jakarta.persistence.EntityNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -30,6 +28,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/projects")
@@ -60,8 +59,25 @@ public class ProjectController {
 
     @PostMapping("/topic")
     public ResponseEntity<ProjectOutlineResponse> createProjectFromTopic(@RequestBody TopicProjectRequest request) {
+        if (request == null || request.getTopic() == null || request.getTopic().isBlank()) {
+            throw new IllegalArgumentException("请求体须包含非空的 topic 字段，例如：{\"topic\":\"你的主题\"}");
+        }
         ProjectOutlineResponse outline = projectService.createProjectFromTopic(request.getTopic());
         return ResponseEntity.status(HttpStatus.CREATED).body(outline);
+    }
+
+    /**
+     * 浏览器地址栏访问本路径会使用 GET，而创建大纲仅支持 POST。提供说明 JSON，避免 Whitelabel 405 页面。
+     */
+    @GetMapping(value = "/topic", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<Map<String, String>> topicEndpointBrowserHint() {
+        return ResponseEntity.ok(Map.of(
+            "message",
+            "创建主题大纲请使用 POST（本页为 GET 说明）。Content-Type: application/json，请求体示例：{\"topic\":\"你的主题\"}。请在应用内操作，或使用 Postman/curl。",
+            "method", "POST",
+            "path", "/api/projects/topic",
+            "contentType", "application/json",
+            "exampleBody", "{\"topic\":\"你的主题\"}"));
     }
 
     @PostMapping("/document")
@@ -93,7 +109,7 @@ public class ProjectController {
         return dot > 0 ? name.substring(0, dot) : name;
     }
 
-    @PutMapping("/{projectId}/outline")
+    @PutMapping("/{projectId:\\d+}/outline")
     public ResponseEntity<Void> replaceOutline(@PathVariable("projectId") Long projectId,
                                              @RequestBody CreateProjectRequest request) {
         projectService.replaceOutline(projectId, request);
@@ -101,14 +117,14 @@ public class ProjectController {
     }
 
     /** 仅更新一页，不影响项目中其它幻灯片 */
-    @PatchMapping("/{projectId}/slides/{slideId}")
+    @PatchMapping("/{projectId:\\d+}/slides/{slideId:\\d+}")
     public ResponseEntity<ProjectDetailResponse> patchSlide(@PathVariable("projectId") Long projectId,
                                                            @PathVariable("slideId") Long slideId,
                                                            @RequestBody UpdateSlideRequest request) {
         return ResponseEntity.ok(projectService.updateSlide(projectId, slideId, request));
     }
 
-    @PostMapping("/{projectId}/slides/generate")
+    @PostMapping("/{projectId:\\d+}/slides/generate")
     public ResponseEntity<ProjectDetailResponse> generateSlideContents(@PathVariable("projectId") Long projectId,
                                                                        @RequestBody(required = false) GenerateSlidesRequest request) {
         GenerateSlidesRequest payload = request != null ? request : new GenerateSlidesRequest();
@@ -116,7 +132,7 @@ public class ProjectController {
         return ResponseEntity.ok(projectService.getProjectById(projectId));
     }
 
-    @PostMapping("/{projectId}/slides/{slideId}/regenerate")
+    @PostMapping("/{projectId:\\d+}/slides/{slideId:\\d+}/regenerate")
     public ResponseEntity<SlideContentResponse> regenerateSlide(@PathVariable("projectId") Long projectId,
                                                                @PathVariable("slideId") Long slideId,
                                                                @RequestBody(required = false) GenerateSlidesRequest request) {
@@ -130,19 +146,9 @@ public class ProjectController {
         return ResponseEntity.ok(response);
     }
 
-    @GetMapping("/{projectId}")
+    @GetMapping("/{projectId:\\d+}")
     public ResponseEntity<ProjectDetailResponse> getProject(@PathVariable("projectId") Long projectId) {
         ProjectDetailResponse response = projectService.getProjectById(projectId);
         return ResponseEntity.ok(response);
-    }
-
-    @ExceptionHandler(EntityNotFoundException.class)
-    public ResponseEntity<String> handleNotFound(EntityNotFoundException exception) {
-        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(exception.getMessage());
-    }
-
-    @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<String> handleBadRequest(IllegalArgumentException exception) {
-        return ResponseEntity.badRequest().body(exception.getMessage());
     }
 }

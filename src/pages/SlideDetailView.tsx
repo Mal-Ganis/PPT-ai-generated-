@@ -23,7 +23,6 @@ export default function SlideDetailView() {
   const [detail, setDetail] = useState<ProjectDetailResponse | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [editBullets, setEditBullets] = useState('');
-  const [editNotes, setEditNotes] = useState('');
   const [editSources, setEditSources] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -51,7 +50,6 @@ export default function SlideDetailView() {
     const bullets = bulletsFromSlide(slide);
     setEditTitle(slide.title);
     setEditBullets(bullets.join('\n'));
-    setEditNotes(slide.notes ?? '');
     setEditSources((slide.sources ?? []).join('\n'));
   }, [slide?.id]);
 
@@ -72,7 +70,7 @@ export default function SlideDetailView() {
         title: editTitle.trim() || slide.title,
         bullets: bulletLines,
         sources: sourceLines,
-        notes: editNotes,
+        notes: '',
       });
       setDetail(updated);
       toast.success('本页已保存，其它页未改动');
@@ -179,15 +177,6 @@ export default function SlideDetailView() {
                   onChange={(e) => setEditSources(e.target.value)}
                   className="min-h-[72px] border-gray-200 text-sm"
                   placeholder="每行一条，例如：https://..."
-                />
-              </div>
-
-              <div>
-                <label className="text-sm font-semibold text-[#1f1f1f]/70 mb-2 block">演讲备注</label>
-                <Textarea
-                  value={editNotes}
-                  onChange={(e) => setEditNotes(e.target.value)}
-                  className="min-h-[100px] border-gray-200"
                 />
               </div>
             </div>

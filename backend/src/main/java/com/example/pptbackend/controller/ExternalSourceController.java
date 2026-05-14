@@ -26,8 +26,8 @@ public class ExternalSourceController {
 
     @GetMapping("/search")
     public ResponseEntity<List<ExternalSourceDocument>> search(
-        @RequestParam String query,
-        @RequestParam(defaultValue = "3") int limit
+        @RequestParam("query") String query,
+        @RequestParam(value = "limit", defaultValue = "3") int limit
     ) {
         return ResponseEntity.ok(externalKnowledgeSourceService.searchExternalSources(query, limit));
     }

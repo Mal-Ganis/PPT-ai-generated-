@@ -1,3 +1,4 @@
+D:\homework\专业方向综合项目\PPT-ai-generated-\backend\src\main\java\com\example\pptbackend\config\AsyncConfig.java
 D:\homework\专业方向综合项目\PPT-ai-generated-\backend\src\main\java\com\example\pptbackend\config\CorsConfig.java
 D:\homework\专业方向综合项目\PPT-ai-generated-\backend\src\main\java\com\example\pptbackend\config\GlobalExceptionHandler.java
 D:\homework\专业方向综合项目\PPT-ai-generated-\backend\src\main\java\com\example\pptbackend\config\RestTemplateConfig.java
@@ -40,6 +41,7 @@ D:\homework\专业方向综合项目\PPT-ai-generated-\backend\src\main\java\com
 D:\homework\专业方向综合项目\PPT-ai-generated-\backend\src\main\java\com\example\pptbackend\repository\SystemConfigRepository.java
 D:\homework\专业方向综合项目\PPT-ai-generated-\backend\src\main\java\com\example\pptbackend\service\AutoEvaluationScoringService.java
 D:\homework\专业方向综合项目\PPT-ai-generated-\backend\src\main\java\com\example\pptbackend\service\DeepseekChatClient.java
+D:\homework\专业方向综合项目\PPT-ai-generated-\backend\src\main\java\com\example\pptbackend\service\DeferredProjectExternalIndexService.java
 D:\homework\专业方向综合项目\PPT-ai-generated-\backend\src\main\java\com\example\pptbackend\service\DocumentIndexingService.java
 D:\homework\专业方向综合项目\PPT-ai-generated-\backend\src\main\java\com\example\pptbackend\service\DocumentTextExtractionService.java
 D:\homework\专业方向综合项目\PPT-ai-generated-\backend\src\main\java\com\example\pptbackend\service\EmbeddingService.java

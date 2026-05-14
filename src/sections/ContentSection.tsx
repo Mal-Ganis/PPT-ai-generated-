@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ArrowRight, ArrowLeft, Loader2, Edit2, RefreshCw } from 'lucide-react';
 import { FlowExitNav } from '@/components/FlowExitNav';
 import { Button } from '@/components/ui/button';
@@ -24,6 +24,14 @@ const ContentSection = ({
   onBack,
 }: ContentSectionProps) => {
   const [slides, setSlides] = useState<SlideData[]>(initialSlides);
+
+  useEffect(() => {
+    setSlides(initialSlides);
+    setCurrentSlideIndex((i) =>
+      initialSlides.length === 0 ? 0 : Math.min(i, initialSlides.length - 1),
+    );
+  }, [initialSlides]);
+
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
@@ -48,7 +56,6 @@ const ContentSection = ({
       updatedSlides[currentSlideIndex] = {
         ...currentSlide,
         content: result.content?.length ? result.content : currentSlide.content,
-        notes: result.notes ?? currentSlide.notes,
         sources: result.sources?.length ? result.sources : currentSlide.sources,
       };
       setSlides(updatedSlides);
@@ -264,12 +271,6 @@ const ContentSection = ({
                   </div>
                 )}
 
-                <div className="mt-6 pt-6 border-t border-gray-200">
-                  <h4 className="text-sm font-medium text-[#1f1f1f]/60 mb-3">演讲备注</h4>
-                  <div className="bg-[#f3f3f3] rounded-lg p-4">
-                    <p className="text-sm text-[#1f1f1f]/70">{currentSlide.notes}</p>
-                  </div>
-                </div>
               </div>
 
               <div className="flex justify-between mt-6">

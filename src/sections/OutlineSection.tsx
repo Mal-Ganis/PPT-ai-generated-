@@ -39,7 +39,6 @@ const OutlineSection = ({ projectId, outline, onConfirm, onBack }: OutlineSectio
       id: Date.now(),
       title: '新页面',
       content: ['要点1', '要点2'],
-      notes: '',
     };
     setSlides([...slides, newSlide]);
   };

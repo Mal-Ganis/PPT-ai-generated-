@@ -40,7 +40,7 @@ public class SlideGenerationService {
             "\n\n【一级修订】要点不足或引用偏弱：请至少输出 3 条要点，每条补充可追溯 sources（检索为空写常识归纳）。",
             2),
         TIER2(
-            "\n\n【二级修订】整体质量仍不达标：请显著提高信息密度、备注长度与引用覆盖，要点表述尽量对齐上方检索片段。",
+            "\n\n【二级修订】整体质量仍不达标：请显著提高信息密度与引用覆盖，要点表述尽量对齐上方检索片段。",
             6);
 
         final String suffix;
@@ -60,7 +60,8 @@ public class SlideGenerationService {
     private static final String SLIDE_QUALITY_RULES = """
 
 【系统提醒】下方若已含「检索上下文」段落，须优先用其中事实与数字；无命中时写常识并标 [待核实]。
-【格式】严格返回合法 JSON；content 至少 3 条；notes 须含上一页/下一页衔接；sources 至少 1 条（字符串或 {title,url,type} 对象均可）。
+【去重】须阅读「前面各页已生成的要点摘要」：禁止把已在前面出现过的公司/产品/大学案例再完整讲一遍；若必须呼应，用一句承接并给出**新增**信息。
+【格式】严格返回合法 JSON；content 至少 3 条；sources 至少 1 条；禁止 example.com 与占位假链；不要输出 notes 字段。
 """;
 
     private final ObjectMapper objectMapper;
@@ -81,6 +82,12 @@ public class SlideGenerationService {
     private final double tier1FactBelow;
     private final double tier2AutoBelow;
     private final double tier2FactBelow;
+    /** 正文专用模型；为 inherit 时沿用系统配置的 llmModel */
+    private final String slideGenerationModel;
+    /** 与 system_config.retrieval_limit 取较小值，控制单页向量命中条数 */
+    private final int slideRetrievalCap;
+    /** Tavily 兜底摘要写入 prompt 的最大字符数 */
+    private final int slideFallbackSnippetMaxChars;
 
     public SlideGenerationService(ObjectMapper objectMapper,
                                   SystemConfigService systemConfigService,
@@ -91,14 +98,17 @@ public class SlideGenerationService {
                                   ProjectRepository projectRepository,
                                   ExternalKnowledgeSourceService externalKnowledgeSourceService,
                                   EvaluationReportService evaluationReportService,
-                                  @Value("${generation.slide-max-tokens:2048}") int slideMaxTokens,
+                                  @Value("${generation.slide-max-tokens:1536}") int slideMaxTokens,
                                   @Value("${generation.slide-fallback-tavily:true}") boolean slideFallbackTavily,
-                                  @Value("${generation.slide-fallback-result-limit:2}") int slideFallbackLimit,
-                                  @Value("${generation.self-correction-enabled:true}") boolean selfCorrectionEnabled,
+                                  @Value("${generation.slide-fallback-result-limit:1}") int slideFallbackLimit,
+                                  @Value("${generation.self-correction-enabled:false}") boolean selfCorrectionEnabled,
                                   @Value("${generation.self-correction-tier1-auto-below:76}") double tier1AutoBelow,
                                   @Value("${generation.self-correction-tier1-fact-below:0.58}") double tier1FactBelow,
                                   @Value("${generation.self-correction-tier2-auto-below:70}") double tier2AutoBelow,
-                                  @Value("${generation.self-correction-tier2-fact-below:0.48}") double tier2FactBelow) {
+                                  @Value("${generation.self-correction-tier2-fact-below:0.48}") double tier2FactBelow,
+                                  @Value("${generation.slide-model:deepseek-chat}") String slideGenerationModel,
+                                  @Value("${generation.slide-retrieval-cap:3}") int slideRetrievalCap,
+                                  @Value("${generation.slide-fallback-snippet-chars:2400}") int slideFallbackSnippetMaxChars) {
         this.objectMapper = objectMapper;
         this.systemConfigService = systemConfigService;
         this.deepseekChatClient = deepseekChatClient;
@@ -116,20 +126,24 @@ public class SlideGenerationService {
         this.tier1FactBelow = tier1FactBelow;
         this.tier2AutoBelow = tier2AutoBelow;
         this.tier2FactBelow = tier2FactBelow;
+        this.slideGenerationModel = slideGenerationModel != null ? slideGenerationModel.trim() : "";
+        this.slideRetrievalCap = Math.min(15, Math.max(1, slideRetrievalCap));
+        this.slideFallbackSnippetMaxChars = Math.max(400, slideFallbackSnippetMaxChars);
     }
 
     @Transactional
     public SlideContentResponse regenerateSlide(Long projectId, Long slideId, String inputType, String inputContent) {
-        return regenerateSlide(projectId, slideId, inputType, inputContent, CorrectionTier.NONE);
+        return regenerateSlide(projectId, slideId, inputType, inputContent, CorrectionTier.NONE, "");
     }
 
     private SlideContentResponse regenerateSlide(Long projectId, Long slideId, String inputType, String inputContent,
-                                                 CorrectionTier tier) {
+                                                 CorrectionTier tier, String priorSlidesDigest) {
         Slide slide = slideRepository.findByIdAndProject_Id(slideId, projectId)
             .orElseThrow(() -> new EntityNotFoundException("Slide not found: " + slideId));
 
         SystemConfigDto config = systemConfigService.getSystemConfig();
-        String ragContext = buildRagContext(projectId, slide.getTitle(), config.getRetrievalLimit(), tier);
+        int topK = Math.min(Math.max(1, config.getRetrievalLimit()), slideRetrievalCap);
+        String ragContext = buildRagContext(projectId, slide.getTitle(), topK, tier);
 
         Project projectForNav = projectRepository.findById(projectId)
             .orElseThrow(() -> new EntityNotFoundException("Project not found: " + projectId));
@@ -160,17 +174,28 @@ public class SlideGenerationService {
         vars.put("nextSlideTitle", nextSlideTitle);
         vars.put("inputType", "topic".equalsIgnoreCase(inputType) ? "主题" : "文档");
         vars.put("inputContent", inputContent != null ? inputContent : "");
+        String digestLine = priorSlidesDigest != null && !priorSlidesDigest.isBlank()
+            ? priorSlidesDigest
+            : "（尚无：封面/目录首页生成时可为空。）";
+        vars.put("prior_slides_digest", digestLine);
         vars.put("retrieved_context", retrievedContextBlock);
 
-        String basePrompt = formatPrompt(config.getSlidePromptTemplate(), vars);
-        String prompt = basePrompt + SLIDE_QUALITY_RULES + tier.suffix;
+        String template = config.getSlidePromptTemplate();
+        String basePrompt = formatPrompt(template, vars);
+        boolean digestInTemplate = template != null && template.contains("{prior_slides_digest}");
+        String digestSection = digestInTemplate
+            ? ""
+            : ("\n## 前面各页已生成的要点摘要（去重用）\n" + digestLine + "\n");
+        String prompt = basePrompt + digestSection + SLIDE_QUALITY_RULES + tier.suffix;
 
         String body = buildSlideRequestBody(prompt, config);
         String responseText = deepseekChatClient.chatCompletions(body, Duration.ofSeconds(120));
         SlideContentResponse parsed = parseSlideResponse(responseText);
+        parsed.setNotes("");
+        parsed.setSources(sanitizeSourcesList(parsed.getSources()));
 
         slide.setBullets(parsed.getContent() != null ? parsed.getContent() : new ArrayList<>());
-        slide.setNotes(parsed.getNotes());
+        slide.setNotes(null);
         if (parsed.getSources() != null && !parsed.getSources().isEmpty()) {
             slide.setSources(parsed.getSources());
         }
@@ -189,8 +214,17 @@ public class SlideGenerationService {
 
         List<Slide> slides = orderedSlides(project);
 
+        List<String> priorChunks = new ArrayList<>();
         for (Slide slide : slides) {
-            regenerateSlide(projectId, slide.getId(), inputType, inputContent, CorrectionTier.NONE);
+            String digest = String.join("\n", priorChunks);
+            if (digest.length() > 3600) {
+                digest = digest.substring(digest.length() - 3600);
+            }
+            regenerateSlide(projectId, slide.getId(), inputType, inputContent, CorrectionTier.NONE, digest);
+            Slide saved = slideRepository.findByIdAndProject_Id(slide.getId(), projectId).orElse(slide);
+            if (saved.getBullets() != null && !saved.getBullets().isEmpty()) {
+                priorChunks.add("【" + nzTitle(saved.getTitle()) + "】" + String.join("；", saved.getBullets()));
+            }
         }
 
         EvaluationReportResponse eval;
@@ -220,13 +254,13 @@ public class SlideGenerationService {
         boolean anyWeak = false;
         for (Slide slide : refreshed) {
             if (needsWeakSlideRegeneration(slide)) {
-                regenerateSlide(projectId, slide.getId(), inputType, inputContent, CorrectionTier.TIER1);
+                regenerateSlide(projectId, slide.getId(), inputType, inputContent, CorrectionTier.TIER1, "");
                 anyWeak = true;
             }
         }
         if (!anyWeak) {
             for (Slide slide : refreshed) {
-                regenerateSlide(projectId, slide.getId(), inputType, inputContent, CorrectionTier.TIER1);
+                regenerateSlide(projectId, slide.getId(), inputType, inputContent, CorrectionTier.TIER1, "");
             }
         }
 
@@ -249,7 +283,7 @@ public class SlideGenerationService {
             .orElseThrow(() -> new EntityNotFoundException("Project not found: " + projectId));
         refreshed = orderedSlides(refreshedProject);
         for (Slide slide : refreshed) {
-            regenerateSlide(projectId, slide.getId(), inputType, inputContent, CorrectionTier.TIER2);
+            regenerateSlide(projectId, slide.getId(), inputType, inputContent, CorrectionTier.TIER2, "");
         }
         try {
             evaluationReportService.createAutoEvaluationReport(projectId);
@@ -272,9 +306,7 @@ public class SlideGenerationService {
         List<String> bullets = slide.getBullets();
         int n = bullets != null ? bullets.size() : 0;
         boolean noSources = slide.getSources() == null || slide.getSources().isEmpty();
-        String notes = slide.getNotes();
-        int noteLen = notes != null ? notes.length() : 0;
-        return n < 3 || noSources || noteLen < 40;
+        return n < 3 || noSources;
     }
 
     private static boolean belowThreshold(EvaluationReportResponse eval,
@@ -311,11 +343,12 @@ public class SlideGenerationService {
         if (!builder.isEmpty()) {
             return builder.toString().trim();
         }
+        // 大纲阶段权威片段改为事务提交后异步入向量库；此处为空时仍可用 Tavily 为正文提供检索上下文
         if (slideFallbackTavily && slideTitle != null && !slideTitle.isBlank()) {
             List<ExternalSourceDocument> docs =
                 externalKnowledgeSourceService.searchExternalSources(slideTitle, slideFallbackLimit);
             if (!docs.isEmpty()) {
-                return externalKnowledgeSourceService.formatDocumentsForSlidePrompt(docs, 3500);
+                return externalKnowledgeSourceService.formatDocumentsForSlidePrompt(docs, slideFallbackSnippetMaxChars);
             }
         }
         return "";
@@ -329,9 +362,22 @@ public class SlideGenerationService {
         return prompt;
     }
 
+    /**
+     * 正文阶段默认用 {@code generation.slide-model}（如 deepseek-chat），避免与大纲共用 reasoner 拖慢；
+     * 配置为 {@code inherit} 时沿用系统配置中的 llmModel。
+     */
+    private String resolveSlideModel(SystemConfigDto config) {
+        if (slideGenerationModel != null && !slideGenerationModel.isBlank()
+            && !"inherit".equalsIgnoreCase(slideGenerationModel)) {
+            return slideGenerationModel;
+        }
+        String fromConfig = config.getLlmModel();
+        return fromConfig != null && !fromConfig.isBlank() ? fromConfig : "deepseek-chat";
+    }
+
     private String buildSlideRequestBody(String prompt, SystemConfigDto config) {
         Map<String, Object> payload = new HashMap<>();
-        payload.put("model", config.getLlmModel());
+        payload.put("model", resolveSlideModel(config));
         payload.put("messages", List.of(Map.of("role", "user", "content", prompt)));
         payload.put("temperature", config.getTemperature());
         payload.put("max_tokens", slideMaxTokens);
@@ -388,7 +434,7 @@ public class SlideGenerationService {
         } else {
             response.setContent(new ArrayList<>());
         }
-        response.setNotes(payload.get("notes") != null ? payload.get("notes").toString() : "");
+        response.setNotes("");
         Object sourcesValue = payload.get("sources");
         if (sourcesValue instanceof List<?> list) {
             response.setSources(list.stream().map(SlideGenerationService::formatSourceEntry).collect(Collectors.toList()));
@@ -425,18 +471,54 @@ public class SlideGenerationService {
         return o != null ? o.toString() : "";
     }
 
+    private List<String> sanitizeSourcesList(List<String> sources) {
+        if (sources == null || sources.isEmpty()) {
+            List<String> fallback = new ArrayList<>();
+            fallback.add("常识归纳需人工核对来源 | type=llm_inference");
+            return fallback;
+        }
+        List<String> out = new ArrayList<>();
+        for (String s : sources) {
+            if (s == null || s.isBlank()) {
+                continue;
+            }
+            if (isBlockedOrHallucinatedSource(s)) {
+                continue;
+            }
+            out.add(s);
+        }
+        if (out.isEmpty()) {
+            out.add("已过滤不可验证链接；请以常识归纳并标 [待核实] | type=llm_inference");
+        }
+        return out;
+    }
+
+    private static boolean isBlockedOrHallucinatedSource(String line) {
+        String lower = line.toLowerCase();
+        if (lower.contains("example.com") || lower.contains("example.org")) {
+            return true;
+        }
+        if (lower.contains("localhost")) {
+            return true;
+        }
+        if (lower.contains("article/123456")) {
+            return true;
+        }
+        return lower.contains("placeholder");
+    }
+
     private SlideContentResponse degradedSlide(String raw) {
         SlideContentResponse response = new SlideContentResponse();
         String line = raw != null ? raw.replace("\n", " ").trim() : "";
         if (line.length() > 400) {
             line = line.substring(0, 400) + "…";
         }
-        response.setContent(List.of(
+        response.setContent(new ArrayList<>(List.of(
             "（结构化解析失败，以下为降级展示的原始摘要）",
             line.isEmpty() ? "无可用文本" : line
-        ));
-        response.setNotes("模型输出不是合法 JSON，已降级；请检查提示词或稍后重试。");
-        response.setSources(List.of("内部降级输出"));
+        )));
+        response.setNotes("");
+        response.setSources(new ArrayList<>(List.of("内部降级输出")));
         return response;
     }
 }
