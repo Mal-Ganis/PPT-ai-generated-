@@ -19,11 +19,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -73,6 +73,7 @@ public class SlideGenerationService {
     private final ProjectRepository projectRepository;
     private final ExternalKnowledgeSourceService externalKnowledgeSourceService;
     private final EvaluationReportService evaluationReportService;
+    private final TransactionTemplate transactionTemplate;
 
     private final int slideMaxTokens;
     private final boolean slideFallbackTavily;
@@ -98,6 +99,7 @@ public class SlideGenerationService {
                                   ProjectRepository projectRepository,
                                   ExternalKnowledgeSourceService externalKnowledgeSourceService,
                                   EvaluationReportService evaluationReportService,
+                                  TransactionTemplate transactionTemplate,
                                   @Value("${generation.slide-max-tokens:1536}") int slideMaxTokens,
                                   @Value("${generation.slide-fallback-tavily:true}") boolean slideFallbackTavily,
                                   @Value("${generation.slide-fallback-result-limit:1}") int slideFallbackLimit,
@@ -118,6 +120,7 @@ public class SlideGenerationService {
         this.projectRepository = projectRepository;
         this.externalKnowledgeSourceService = externalKnowledgeSourceService;
         this.evaluationReportService = evaluationReportService;
+        this.transactionTemplate = transactionTemplate;
         this.slideMaxTokens = Math.max(512, slideMaxTokens);
         this.slideFallbackTavily = slideFallbackTavily;
         this.slideFallbackLimit = Math.max(1, slideFallbackLimit);
@@ -131,23 +134,45 @@ public class SlideGenerationService {
         this.slideFallbackSnippetMaxChars = Math.max(400, slideFallbackSnippetMaxChars);
     }
 
-    @Transactional
-    public SlideContentResponse regenerateSlide(Long projectId, Long slideId, String inputType, String inputContent) {
-        return regenerateSlide(projectId, slideId, inputType, inputContent, CorrectionTier.NONE, "");
+    @FunctionalInterface
+    public interface SlideGenerationProgressListener {
+        void onProgress(int completedSlides, int totalSlides);
     }
 
-    private SlideContentResponse regenerateSlide(Long projectId, Long slideId, String inputType, String inputContent,
+    @Transactional
+    public SlideContentResponse regenerateSlide(Long projectId, Long slideId, String inputType, String inputContent) {
+        return doRegenerateSlide(projectId, slideId, inputType, inputContent, CorrectionTier.NONE, "");
+    }
+
+    private void regenerateSlideInNewTransaction(Long projectId, Long slideId, String inputType, String inputContent,
+                                               CorrectionTier tier, String priorSlidesDigest) {
+        transactionTemplate.executeWithoutResult(status ->
+            doRegenerateSlide(projectId, slideId, inputType, inputContent, tier, priorSlidesDigest));
+    }
+
+    private SlideContentResponse doRegenerateSlide(Long projectId, Long slideId, String inputType, String inputContent,
                                                  CorrectionTier tier, String priorSlidesDigest) {
         Slide slide = slideRepository.findByIdAndProject_Id(slideId, projectId)
             .orElseThrow(() -> new EntityNotFoundException("Slide not found: " + slideId));
+
+        if (StructuralSlideDetector.isStructuralSlide(slide.getTitle(), slide.getChapter())) {
+            log.debug("Skipping LLM for structural slide project={} slide={} title={}",
+                projectId, slideId, slide.getTitle());
+            return preserveOutlineBullets(slide);
+        }
+
+        Project project = projectRepository.findById(projectId)
+            .orElseThrow(() -> new EntityNotFoundException("Project not found: " + projectId));
+        int durationMinutes = PresentationDurationPlanner.clampMinutes(project.getPresentationDurationMinutes());
 
         SystemConfigDto config = systemConfigService.getSystemConfig();
         int topK = Math.min(Math.max(1, config.getRetrievalLimit()), slideRetrievalCap);
         String ragContext = buildRagContext(projectId, slide.getTitle(), topK, tier);
 
-        Project projectForNav = projectRepository.findById(projectId)
-            .orElseThrow(() -> new EntityNotFoundException("Project not found: " + projectId));
-        List<Slide> ordered = orderedSlides(projectForNav);
+        if (!projectRepository.existsById(projectId)) {
+            throw new EntityNotFoundException("Project not found: " + projectId);
+        }
+        List<Slide> ordered = loadOrderedSlides(projectId);
         int idx = -1;
         for (int i = 0; i < ordered.size(); i++) {
             if (slide.getId().equals(ordered.get(i).getId())) {
@@ -186,7 +211,8 @@ public class SlideGenerationService {
         String digestSection = digestInTemplate
             ? ""
             : ("\n## 前面各页已生成的要点摘要（去重用）\n" + digestLine + "\n");
-        String prompt = basePrompt + digestSection + SLIDE_QUALITY_RULES + tier.suffix;
+        String durationBlock = PresentationDurationPlanner.slideGuidanceBlock(durationMinutes);
+        String prompt = basePrompt + digestSection + SLIDE_QUALITY_RULES + "\n\n" + durationBlock + tier.suffix;
 
         String body = buildSlideRequestBody(prompt, config);
         String responseText = deepseekChatClient.chatCompletions(body, Duration.ofSeconds(120));
@@ -195,6 +221,7 @@ public class SlideGenerationService {
         parsed.setSources(sanitizeSourcesList(parsed.getSources()));
 
         slide.setBullets(parsed.getContent() != null ? parsed.getContent() : new ArrayList<>());
+        slide.setPptBullets(new ArrayList<>());
         slide.setNotes(null);
         if (parsed.getSources() != null && !parsed.getSources().isEmpty()) {
             slide.setSources(parsed.getSources());
@@ -204,32 +231,45 @@ public class SlideGenerationService {
         return parsed;
     }
 
-    @Transactional
     public void generateAllSlides(Long projectId, GenerateSlidesRequest request) {
-        Project project = projectRepository.findById(projectId)
-            .orElseThrow(() -> new EntityNotFoundException("Project not found: " + projectId));
+        generateAllSlides(projectId, request, null);
+    }
+
+    public void generateAllSlides(Long projectId,
+                                GenerateSlidesRequest request,
+                                SlideGenerationProgressListener progress) {
+        if (!projectRepository.existsById(projectId)) {
+            throw new EntityNotFoundException("Project not found: " + projectId);
+        }
 
         String inputType = request.getInputType() != null ? request.getInputType() : "topic";
         String inputContent = request.getInputContent() != null ? request.getInputContent() : "";
 
-        List<Slide> slides = orderedSlides(project);
+        List<Slide> slides = loadOrderedSlides(projectId);
+        int total = slides.size();
 
         List<String> priorChunks = new ArrayList<>();
-        for (Slide slide : slides) {
+        for (int i = 0; i < slides.size(); i++) {
+            Slide slide = slides.get(i);
             String digest = String.join("\n", priorChunks);
             if (digest.length() > 3600) {
                 digest = digest.substring(digest.length() - 3600);
             }
-            regenerateSlide(projectId, slide.getId(), inputType, inputContent, CorrectionTier.NONE, digest);
+            final String digestFinal = digest;
+            regenerateSlideInNewTransaction(projectId, slide.getId(), inputType, inputContent, CorrectionTier.NONE, digestFinal);
             Slide saved = slideRepository.findByIdAndProject_Id(slide.getId(), projectId).orElse(slide);
             if (saved.getBullets() != null && !saved.getBullets().isEmpty()) {
                 priorChunks.add("【" + nzTitle(saved.getTitle()) + "】" + String.join("；", saved.getBullets()));
+            }
+            if (progress != null) {
+                progress.onProgress(i + 1, total);
             }
         }
 
         EvaluationReportResponse eval;
         try {
-            eval = evaluationReportService.createAutoEvaluationReportAndReturn(projectId);
+            eval = transactionTemplate.execute(status ->
+                evaluationReportService.createAutoEvaluationReportAndReturn(projectId));
         } catch (Exception e) {
             log.warn("Auto evaluation after slide generation failed: {}", e.getMessage());
             return;
@@ -248,24 +288,26 @@ public class SlideGenerationService {
             eval.getAutoTotalScore(),
             eval.getFactVerificationRate());
 
-        Project refreshedProject = projectRepository.findById(projectId)
-            .orElseThrow(() -> new EntityNotFoundException("Project not found: " + projectId));
-        List<Slide> refreshed = orderedSlides(refreshedProject);
+        List<Slide> refreshed = loadOrderedSlides(projectId);
         boolean anyWeak = false;
         for (Slide slide : refreshed) {
             if (needsWeakSlideRegeneration(slide)) {
-                regenerateSlide(projectId, slide.getId(), inputType, inputContent, CorrectionTier.TIER1, "");
+                regenerateSlideInNewTransaction(projectId, slide.getId(), inputType, inputContent, CorrectionTier.TIER1, "");
                 anyWeak = true;
             }
         }
         if (!anyWeak) {
             for (Slide slide : refreshed) {
-                regenerateSlide(projectId, slide.getId(), inputType, inputContent, CorrectionTier.TIER1, "");
+                if (StructuralSlideDetector.isStructuralSlide(slide.getTitle(), slide.getChapter())) {
+                    continue;
+                }
+                regenerateSlideInNewTransaction(projectId, slide.getId(), inputType, inputContent, CorrectionTier.TIER1, "");
             }
         }
 
         try {
-            eval = evaluationReportService.createAutoEvaluationReportAndReturn(projectId);
+            eval = transactionTemplate.execute(status ->
+                evaluationReportService.createAutoEvaluationReportAndReturn(projectId));
         } catch (Exception e) {
             log.warn("Re-eval after tier1 failed: {}", e.getMessage());
             return;
@@ -279,14 +321,16 @@ public class SlideGenerationService {
             "Self-correction tier2 full pass (auto={}, fact={})",
             eval.getAutoTotalScore(),
             eval.getFactVerificationRate());
-        refreshedProject = projectRepository.findById(projectId)
-            .orElseThrow(() -> new EntityNotFoundException("Project not found: " + projectId));
-        refreshed = orderedSlides(refreshedProject);
+        refreshed = loadOrderedSlides(projectId);
         for (Slide slide : refreshed) {
-            regenerateSlide(projectId, slide.getId(), inputType, inputContent, CorrectionTier.TIER2, "");
+            if (StructuralSlideDetector.isStructuralSlide(slide.getTitle(), slide.getChapter())) {
+                continue;
+            }
+            regenerateSlideInNewTransaction(projectId, slide.getId(), inputType, inputContent, CorrectionTier.TIER2, "");
         }
         try {
-            evaluationReportService.createAutoEvaluationReport(projectId);
+            transactionTemplate.executeWithoutResult(status ->
+                evaluationReportService.createAutoEvaluationReport(projectId));
         } catch (Exception e) {
             log.warn("Auto evaluation after tier2 failed: {}", e.getMessage());
         }
@@ -296,17 +340,68 @@ public class SlideGenerationService {
         return title != null ? title : "";
     }
 
-    private static List<Slide> orderedSlides(Project project) {
-        return project.getSlides().stream()
-            .sorted(Comparator.comparing(Slide::getPosition))
-            .collect(Collectors.toList());
+    private List<Slide> loadOrderedSlides(Long projectId) {
+        return slideRepository.findByProject_IdOrderByPositionAsc(projectId);
     }
 
     private static boolean needsWeakSlideRegeneration(Slide slide) {
+        if (StructuralSlideDetector.isStructuralSlide(slide.getTitle(), slide.getChapter())) {
+            return false;
+        }
         List<String> bullets = slide.getBullets();
         int n = bullets != null ? bullets.size() : 0;
         boolean noSources = slide.getSources() == null || slide.getSources().isEmpty();
         return n < 3 || noSources;
+    }
+
+    /**
+     * 封面 / 目录 / 问答讨论等页保留大纲要点，不调用大模型扩写。
+     */
+    private SlideContentResponse preserveOutlineBullets(Slide slide) {
+        List<String> bullets = slide.getBullets();
+        if (bullets == null || bullets.isEmpty()) {
+            bullets = defaultStructuralBullets(slide);
+        } else {
+            bullets = bullets.stream()
+                .filter(b -> b != null && !b.isBlank())
+                .map(String::trim)
+                .collect(Collectors.toCollection(ArrayList::new));
+            if (bullets.isEmpty()) {
+                bullets = defaultStructuralBullets(slide);
+            }
+        }
+        slide.setBullets(bullets);
+        slide.setPptBullets(new ArrayList<>(bullets));
+        slide.setNotes(null);
+        slide.setSources(new ArrayList<>());
+        slideRepository.save(slide);
+
+        SlideContentResponse response = new SlideContentResponse();
+        response.setContent(new ArrayList<>(bullets));
+        response.setNotes("");
+        response.setSources(new ArrayList<>());
+        return response;
+    }
+
+    private static List<String> defaultStructuralBullets(Slide slide) {
+        String title = slide.getTitle() != null ? slide.getTitle().trim() : "";
+        if (StructuralSlideDetector.isCover(title)) {
+            return new ArrayList<>(List.of(
+                "主标题：（请在内容编辑中填写）",
+                "副标题：（可选）",
+                "汇报信息：单位 / 姓名 / 日期"));
+        }
+        if (StructuralSlideDetector.isTableOfContents(title)) {
+            return new ArrayList<>(List.of(
+                "1）请在大纲中维护各章/各页标题",
+                "2）目录页仅列出路线图，正文页再展开细节"));
+        }
+        if (StructuralSlideDetector.isQaOrDiscussion(title, slide.getChapter())) {
+            return new ArrayList<>(List.of(
+                "欢迎提问与交流",
+                "可提前准备 2–3 个常见问题及简要回答要点"));
+        }
+        return new ArrayList<>(List.of("（骨架页：请在大纲或本页编辑中补充简短要点）"));
     }
 
     private static boolean belowThreshold(EvaluationReportResponse eval,

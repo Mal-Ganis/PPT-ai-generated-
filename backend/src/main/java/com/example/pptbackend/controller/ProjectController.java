@@ -7,10 +7,15 @@ import com.example.pptbackend.dto.ProjectDetailResponse;
 import com.example.pptbackend.dto.ProjectOutlineResponse;
 import com.example.pptbackend.dto.ProjectSummaryDto;
 import com.example.pptbackend.dto.SlideContentResponse;
+import com.example.pptbackend.dto.SlideGenerationStatusDto;
 import com.example.pptbackend.dto.TopicProjectRequest;
 import com.example.pptbackend.dto.UpdateSlideRequest;
 import com.example.pptbackend.service.DocumentTextExtractionService;
 import com.example.pptbackend.service.ProjectService;
+import com.example.pptbackend.dto.PptDisplayExtractionStatusDto;
+import com.example.pptbackend.service.PptDisplayExtractionOrchestrator;
+import com.example.pptbackend.service.PptDisplayExtractionService;
+import com.example.pptbackend.service.SlideGenerationOrchestrator;
 import com.example.pptbackend.service.SlideGenerationService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -36,13 +41,22 @@ public class ProjectController {
 
     private final ProjectService projectService;
     private final SlideGenerationService slideGenerationService;
+    private final SlideGenerationOrchestrator slideGenerationOrchestrator;
+    private final PptDisplayExtractionService pptDisplayExtractionService;
+    private final PptDisplayExtractionOrchestrator pptDisplayExtractionOrchestrator;
     private final DocumentTextExtractionService documentTextExtractionService;
 
     public ProjectController(ProjectService projectService,
                              SlideGenerationService slideGenerationService,
+                             SlideGenerationOrchestrator slideGenerationOrchestrator,
+                             PptDisplayExtractionService pptDisplayExtractionService,
+                             PptDisplayExtractionOrchestrator pptDisplayExtractionOrchestrator,
                              DocumentTextExtractionService documentTextExtractionService) {
         this.projectService = projectService;
         this.slideGenerationService = slideGenerationService;
+        this.slideGenerationOrchestrator = slideGenerationOrchestrator;
+        this.pptDisplayExtractionService = pptDisplayExtractionService;
+        this.pptDisplayExtractionOrchestrator = pptDisplayExtractionOrchestrator;
         this.documentTextExtractionService = documentTextExtractionService;
     }
 
@@ -62,7 +76,9 @@ public class ProjectController {
         if (request == null || request.getTopic() == null || request.getTopic().isBlank()) {
             throw new IllegalArgumentException("请求体须包含非空的 topic 字段，例如：{\"topic\":\"你的主题\"}");
         }
-        ProjectOutlineResponse outline = projectService.createProjectFromTopic(request.getTopic());
+        ProjectOutlineResponse outline = projectService.createProjectFromTopic(
+            request.getTopic(),
+            request.getPresentationDurationMinutes());
         return ResponseEntity.status(HttpStatus.CREATED).body(outline);
     }
 
@@ -82,7 +98,10 @@ public class ProjectController {
 
     @PostMapping("/document")
     public ResponseEntity<ProjectOutlineResponse> createProjectFromDocument(@RequestBody DocumentProjectRequest request) {
-        ProjectOutlineResponse outline = projectService.createProjectFromDocument(request.getTitle(), request.getText());
+        ProjectOutlineResponse outline = projectService.createProjectFromDocument(
+            request.getTitle(),
+            request.getText(),
+            request.getPresentationDurationMinutes());
         return ResponseEntity.status(HttpStatus.CREATED).body(outline);
     }
 
@@ -92,11 +111,13 @@ public class ProjectController {
     @PostMapping(value = "/document/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ProjectOutlineResponse> uploadDocument(
         @RequestParam("file") MultipartFile file,
-        @RequestParam(value = "title", required = false) String title
+        @RequestParam(value = "title", required = false) String title,
+        @RequestParam(value = "presentationDurationMinutes", required = false) Integer presentationDurationMinutes
     ) throws IOException {
         String text = documentTextExtractionService.extractText(file);
         String resolvedTitle = title != null && !title.isBlank() ? title : deriveFilenameTitle(file);
-        ProjectOutlineResponse outline = projectService.createProjectFromDocument(resolvedTitle, text);
+        ProjectOutlineResponse outline = projectService.createProjectFromDocument(
+            resolvedTitle, text, presentationDurationMinutes);
         return ResponseEntity.status(HttpStatus.CREATED).body(outline);
     }
 
@@ -124,12 +145,21 @@ public class ProjectController {
         return ResponseEntity.ok(projectService.updateSlide(projectId, slideId, request));
     }
 
+    /**
+     * 异步启动正文生成：立即返回 202，避免长连接在写回超大 JSON 时被客户端/代理断开。
+     * 前端请轮询 {@link #getSlideGenerationStatus}，完成后用 {@link #getProject} 拉取结果。
+     */
     @PostMapping("/{projectId:\\d+}/slides/generate")
-    public ResponseEntity<ProjectDetailResponse> generateSlideContents(@PathVariable("projectId") Long projectId,
-                                                                       @RequestBody(required = false) GenerateSlidesRequest request) {
+    public ResponseEntity<SlideGenerationStatusDto> generateSlideContents(@PathVariable("projectId") Long projectId,
+                                                                         @RequestBody(required = false) GenerateSlidesRequest request) {
         GenerateSlidesRequest payload = request != null ? request : new GenerateSlidesRequest();
-        slideGenerationService.generateAllSlides(projectId, payload);
-        return ResponseEntity.ok(projectService.getProjectById(projectId));
+        SlideGenerationStatusDto status = slideGenerationOrchestrator.start(projectId, payload);
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(status);
+    }
+
+    @GetMapping("/{projectId:\\d+}/slides/generate/status")
+    public ResponseEntity<SlideGenerationStatusDto> getSlideGenerationStatus(@PathVariable("projectId") Long projectId) {
+        return ResponseEntity.ok(slideGenerationOrchestrator.getStatus(projectId));
     }
 
     @PostMapping("/{projectId:\\d+}/slides/{slideId:\\d+}/regenerate")
@@ -146,9 +176,37 @@ public class ProjectController {
         return ResponseEntity.ok(response);
     }
 
+    /** 异步：从讲稿要点提炼适合投影的 pptBullets */
+    @PostMapping("/{projectId:\\d+}/slides/extract-ppt-display")
+    public ResponseEntity<PptDisplayExtractionStatusDto> extractPptDisplay(
+        @PathVariable("projectId") Long projectId,
+        @RequestParam(name = "force", defaultValue = "false") boolean force
+    ) {
+        return ResponseEntity.status(HttpStatus.ACCEPTED)
+            .body(pptDisplayExtractionOrchestrator.start(projectId, force));
+    }
+
+    @GetMapping("/{projectId:\\d+}/slides/extract-ppt-display/status")
+    public ResponseEntity<PptDisplayExtractionStatusDto> getPptDisplayExtractionStatus(
+        @PathVariable("projectId") Long projectId
+    ) {
+        return ResponseEntity.ok(pptDisplayExtractionOrchestrator.getStatus(projectId));
+    }
+
+    @PostMapping("/{projectId:\\d+}/slides/{slideId:\\d+}/extract-ppt-display")
+    public ResponseEntity<List<String>> extractPptDisplayForSlide(
+        @PathVariable("projectId") Long projectId,
+        @PathVariable("slideId") Long slideId
+    ) {
+        return ResponseEntity.ok(pptDisplayExtractionService.extractAndSaveSlide(projectId, slideId));
+    }
+
     @GetMapping("/{projectId:\\d+}")
-    public ResponseEntity<ProjectDetailResponse> getProject(@PathVariable("projectId") Long projectId) {
-        ProjectDetailResponse response = projectService.getProjectById(projectId);
+    public ResponseEntity<ProjectDetailResponse> getProject(
+        @PathVariable("projectId") Long projectId,
+        @RequestParam(name = "includeEvaluations", defaultValue = "false") boolean includeEvaluations
+    ) {
+        ProjectDetailResponse response = projectService.getProjectById(projectId, includeEvaluations);
         return ResponseEntity.ok(response);
     }
 }

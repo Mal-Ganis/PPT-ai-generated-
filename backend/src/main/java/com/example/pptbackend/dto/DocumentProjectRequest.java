@@ -4,6 +4,7 @@ public class DocumentProjectRequest {
 
     private String title;
     private String text;
+    private Integer presentationDurationMinutes;
 
     public String getTitle() {
         return title;
@@ -19,5 +20,13 @@ public class DocumentProjectRequest {
 
     public void setText(String text) {
         this.text = text;
+    }
+
+    public Integer getPresentationDurationMinutes() {
+        return presentationDurationMinutes;
+    }
+
+    public void setPresentationDurationMinutes(Integer presentationDurationMinutes) {
+        this.presentationDurationMinutes = presentationDurationMinutes;
     }
 }

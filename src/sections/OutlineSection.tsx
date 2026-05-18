@@ -8,7 +8,7 @@ import type { OutlineData, SlideData } from '../App';
 interface OutlineSectionProps {
   projectId?: number | null;
   outline: OutlineData;
-  onConfirm: (slides: SlideData[]) => Promise<void>;
+  onConfirm: (slides: SlideData[], reportProgress?: (message: string) => void) => Promise<void>;
   onBack: () => void;
 }
 
@@ -29,8 +29,18 @@ const OutlineSection = ({ projectId, outline, onConfirm, onBack }: OutlineSectio
     if (!hasToc && slides.length > 4) hints.push('页数较多时建议加入目录页以便导航');
     if (!hasSummary) hints.push('建议加入总结或致谢页以形成闭环');
     if (slides.length < 5) hints.push('演示通常至少包含 5–8 页结构');
+    const minutes = outline.presentationDurationMinutes;
+    if (minutes != null) {
+      const maxSuggested =
+        minutes <= 8 ? 8 : minutes <= 15 ? 11 : minutes <= 25 ? 14 : 18;
+      if (slides.length > maxSuggested) {
+        hints.push(
+          `当前 ${slides.length} 页，对 ${minutes} 分钟演讲可能偏多，建议删减次要页`,
+        );
+      }
+    }
     return hints;
-  }, [slides]);
+  }, [slides, outline.presentationDurationMinutes]);
   const [isLoading, setIsLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
 
@@ -65,7 +75,7 @@ const OutlineSection = ({ projectId, outline, onConfirm, onBack }: OutlineSectio
     setIsLoading(true);
     setStatusMessage('AI 正在全力工作，正在生成幻灯片内容...');
     try {
-      await onConfirm(slides);
+      await onConfirm(slides, setStatusMessage);
     } finally {
       setIsLoading(false);
       setStatusMessage('');
@@ -81,6 +91,11 @@ const OutlineSection = ({ projectId, outline, onConfirm, onBack }: OutlineSectio
             <div>
               <h1 className="text-2xl sm:text-3xl font-bold text-[#1f1f1f] mb-2">大纲编辑</h1>
               <p className="text-[#1f1f1f]/60">主题：{outline.title}</p>
+              {outline.presentationDurationMinutes != null && (
+                <p className="text-sm text-[#3898ec] mt-1">
+                  目标演讲时长：{outline.presentationDurationMinutes} 分钟（正文将按此时长控制密度）
+                </p>
+              )}
             </div>
             <div className="flex items-center gap-3">
               <Button variant="outline" onClick={onBack} className="border-gray-200 text-[#1f1f1f]">

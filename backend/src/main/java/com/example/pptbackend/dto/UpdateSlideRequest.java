@@ -9,6 +9,7 @@ public class UpdateSlideRequest {
     private String chapter;
     private String body;
     private List<String> bullets;
+    private List<String> pptBullets;
     private List<String> sources;
     private String notes;
 
@@ -42,6 +43,14 @@ public class UpdateSlideRequest {
 
     public void setBullets(List<String> bullets) {
         this.bullets = bullets;
+    }
+
+    public List<String> getPptBullets() {
+        return pptBullets;
+    }
+
+    public void setPptBullets(List<String> pptBullets) {
+        this.pptBullets = pptBullets;
     }
 
     public List<String> getSources() {

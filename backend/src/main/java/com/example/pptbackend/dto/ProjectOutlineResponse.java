@@ -7,6 +7,7 @@ public class ProjectOutlineResponse {
 
     private Long projectId;
     private String title;
+    private Integer presentationDurationMinutes;
     private List<OutlineSlide> slides = new ArrayList<>();
 
     public Long getProjectId() {
@@ -23,6 +24,14 @@ public class ProjectOutlineResponse {
 
     public void setTitle(String title) {
         this.title = title;
+    }
+
+    public Integer getPresentationDurationMinutes() {
+        return presentationDurationMinutes;
+    }
+
+    public void setPresentationDurationMinutes(Integer presentationDurationMinutes) {
+        this.presentationDurationMinutes = presentationDurationMinutes;
     }
 
     public List<OutlineSlide> getSlides() {

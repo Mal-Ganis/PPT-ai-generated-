@@ -1,5 +1,9 @@
 import { useState, useRef } from 'react';
-import { Type, FileUp, ArrowRight, Sparkles, Loader2, X, FileText } from 'lucide-react';
+import { Type, FileUp, ArrowRight, Sparkles, Loader2, X, FileText, Clock } from 'lucide-react';
+import {
+  PRESENTATION_DURATION_OPTIONS,
+  DEFAULT_PRESENTATION_DURATION_MINUTES,
+} from '@/lib/backend';
 import { FlowExitNav } from '@/components/FlowExitNav';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -9,7 +13,7 @@ interface InputSectionProps {
   onSubmit: (
     type: 'topic' | 'document',
     content: string,
-    meta?: { fileName?: string; formData?: FormData },
+    meta?: { fileName?: string; formData?: FormData; presentationDurationMinutes?: number },
   ) => Promise<void>;
 }
 
@@ -20,6 +24,9 @@ const InputSection = ({ onSubmit }: InputSectionProps) => {
   const [documentContent, setDocumentContent] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
+  const [presentationMinutes, setPresentationMinutes] = useState<number>(
+    DEFAULT_PRESENTATION_DURATION_MINUTES,
+  );
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -56,14 +63,15 @@ const InputSection = ({ onSubmit }: InputSectionProps) => {
     setStatusMessage('AI 正在全力工作，请稍候...');
 
     try {
+      const durationMeta = { presentationDurationMinutes: presentationMinutes };
       if (inputType === 'topic') {
-        await onSubmit('topic', topic);
+        await onSubmit('topic', topic, durationMeta);
       } else if (uploadedFile) {
         const fd = new FormData();
         fd.append('file', uploadedFile);
-        await onSubmit('document', '', { formData: fd, fileName: uploadedFile.name });
+        await onSubmit('document', '', { formData: fd, fileName: uploadedFile.name, ...durationMeta });
       } else {
-        await onSubmit('document', documentContent || '', {});
+        await onSubmit('document', documentContent || '', durationMeta);
       }
     } finally {
       setIsLoading(false);
@@ -125,6 +133,32 @@ const InputSection = ({ onSubmit }: InputSectionProps) => {
                 <FileUp className="w-5 h-5" />
                 <span className="font-medium">上传文档</span>
               </button>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-lg p-6 mb-8">
+            <div className="flex items-center gap-2 mb-3">
+              <Clock className="w-5 h-5 text-[#3898ec]" />
+              <span className="text-sm font-medium text-[#1f1f1f]">目标演讲时长</span>
+            </div>
+            <p className="text-sm text-[#1f1f1f]/55 mb-4">
+              AI 将据此控制大纲页数与正文要点密度，避免内容过多难以口头讲解（默认 15 分钟）。
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {PRESENTATION_DURATION_OPTIONS.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setPresentationMinutes(m)}
+                  className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                    presentationMinutes === m
+                      ? 'bg-[#3898ec] text-white shadow-md'
+                      : 'bg-[#f3f3f3] text-[#1f1f1f]/70 hover:bg-[#3898ec]/10 hover:text-[#3898ec]'
+                  }`}
+                >
+                  {m} 分钟
+                </button>
+              ))}
             </div>
           </div>
 

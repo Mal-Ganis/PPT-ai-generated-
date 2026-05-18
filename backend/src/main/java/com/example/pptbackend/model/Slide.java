@@ -44,6 +44,12 @@ public class Slide {
     @Column(name = "bullet", columnDefinition = "TEXT")
     private List<String> bullets = new ArrayList<>();
 
+    /** 适合投影的短要点（由讲稿 bullets 提炼，供预览中间栏展示） */
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "slide_ppt_bullets", joinColumns = @JoinColumn(name = "slide_id"))
+    @Column(name = "ppt_bullet", columnDefinition = "TEXT")
+    private List<String> pptBullets = new ArrayList<>();
+
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "slide_sources", joinColumns = @JoinColumn(name = "slide_id"))
     @Column(name = "source", columnDefinition = "TEXT")
@@ -75,6 +81,7 @@ public class Slide {
             notes = notes.substring(0, 65535);
         }
         clampList(bullets, MAX_BULLET_CHARS);
+        clampList(pptBullets, MAX_BULLET_CHARS);
         clampList(sources, MAX_SOURCE_CHARS);
     }
 
@@ -128,6 +135,14 @@ public class Slide {
 
     public void setBullets(List<String> bullets) {
         this.bullets = bullets != null ? new ArrayList<>(bullets) : new ArrayList<>();
+    }
+
+    public List<String> getPptBullets() {
+        return pptBullets;
+    }
+
+    public void setPptBullets(List<String> pptBullets) {
+        this.pptBullets = pptBullets != null ? new ArrayList<>(pptBullets) : new ArrayList<>();
     }
 
     public List<String> getSources() {

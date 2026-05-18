@@ -47,6 +47,10 @@ public class OutlineGenerationService {
     }
 
     public ProjectOutlineResponse generateOutline(String topic) {
+        return generateOutline(topic, PresentationDurationPlanner.DEFAULT_MINUTES);
+    }
+
+    public ProjectOutlineResponse generateOutline(String topic, int presentationDurationMinutes) {
         SystemConfigDto config = systemConfigService.getSystemConfig();
         String augmented = topic != null ? topic : "";
         if (!OUTLINE_NARRATIVE_HINT.isBlank()) {
@@ -56,6 +60,7 @@ public class OutlineGenerationService {
         String prompt = formatPrompt(
             config.getOutlinePromptTemplate(),
             Map.of("content", topicAndRetrieval[0], "retrieved_context", topicAndRetrieval[1]));
+        prompt = prompt + "\n\n" + PresentationDurationPlanner.outlineGuidanceBlock(presentationDurationMinutes);
 
         String body = buildOutlineRequestBody(prompt, config);
         String responseText = deepseekChatClient.chatCompletions(body, Duration.ofSeconds(120));
@@ -154,19 +159,11 @@ public class OutlineGenerationService {
     }
 
     private static boolean looksLikeCoverSlide(ProjectOutlineResponse.OutlineSlide s) {
-        if (s == null || s.getTitle() == null) {
-            return false;
-        }
-        String t = s.getTitle();
-        return t.contains("封面") || t.contains("扉页") || t.matches("(?i).*\\bcover\\b.*");
+        return s != null && StructuralSlideDetector.isCover(s.getTitle());
     }
 
     private static boolean looksLikeTocSlide(ProjectOutlineResponse.OutlineSlide s) {
-        if (s == null || s.getTitle() == null) {
-            return false;
-        }
-        String t = s.getTitle();
-        return t.contains("目录") || t.contains("目次") || t.matches("(?i).*(contents|agenda).*");
+        return s != null && StructuralSlideDetector.isTableOfContents(s.getTitle());
     }
 
     /**

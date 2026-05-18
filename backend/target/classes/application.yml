@@ -61,6 +61,7 @@ generation:
   slide-retrieval-cap: ${GENERATION_SLIDE_RETRIEVAL_CAP:3}
   # Tavily 兜底写入 prompt 的摘要最大字符数
   slide-fallback-snippet-chars: ${GENERATION_SLIDE_FALLBACK_SNIPPET_CHARS:2400}
+  ppt-display-model: ${GENERATION_PPT_DISPLAY_MODEL:deepseek-chat}
   # 关闭自评多级重跑，显著缩短「确认大纲 → 生成正文」总耗时
   self-correction-enabled: ${GENERATION_SELF_CORRECTION_ENABLED:false}
   self-correction-tier1-auto-below: ${GENERATION_SC_T1_AUTO:76}

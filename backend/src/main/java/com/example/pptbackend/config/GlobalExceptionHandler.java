@@ -6,8 +6,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
+import java.io.IOException;
 import java.util.Map;
 
 /**
@@ -44,6 +46,26 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, String>> notReadable(HttpMessageNotReadableException ex) {
         return ResponseEntity.badRequest()
             .body(Map.of("message", "请求体须为合法 JSON，例如创建主题：{\"topic\":\"演示主题\"}。"));
+    }
+
+    /**
+     * 客户端已断开（刷新/关页/超时），无需再写响应体；降级日志避免误判为服务端错误。
+     */
+    @ExceptionHandler(AsyncRequestNotUsableException.class)
+    public void clientDisconnected(AsyncRequestNotUsableException exception) {
+        if (exception.getCause() instanceof IOException io && isClientAbort(io)) {
+            return;
+        }
+        if (exception.getCause() == null
+            || exception.getMessage() == null
+            || exception.getMessage().contains("interrupted")) {
+            return;
+        }
+    }
+
+    private static boolean isClientAbort(IOException io) {
+        String msg = io.getMessage();
+        return msg != null && (msg.contains("Connection reset") || msg.contains("interrupted"));
     }
 
     @ExceptionHandler(IllegalStateException.class)

@@ -11,7 +11,7 @@ interface ContentSectionProps {
   slides: SlideData[];
   inputType: 'topic' | 'document';
   inputContent: string;
-  onConfirm: (slides: SlideData[]) => Promise<void>;
+  onConfirm: (slides: SlideData[], reportProgress?: (message: string) => void) => Promise<void>;
   onBack: () => void;
 }
 
@@ -56,6 +56,7 @@ const ContentSection = ({
       updatedSlides[currentSlideIndex] = {
         ...currentSlide,
         content: result.content?.length ? result.content : currentSlide.content,
+        pptContent: [],
         sources: result.sources?.length ? result.sources : currentSlide.sources,
       };
       setSlides(updatedSlides);
@@ -91,10 +92,12 @@ const ContentSection = ({
   };
 
   const handleConfirm = async () => {
-    setStatusMessage('正在保存…');
+    setIsLoading(true);
+    setStatusMessage('正在保存并准备预览…');
     try {
-      await onConfirm(slides);
+      await onConfirm(slides, setStatusMessage);
     } finally {
+      setIsLoading(false);
       setStatusMessage('');
     }
   };

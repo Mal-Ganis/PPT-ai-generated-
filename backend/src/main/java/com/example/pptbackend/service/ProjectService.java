@@ -67,11 +67,17 @@ public class ProjectService {
 
     @Transactional
     public ProjectOutlineResponse createProjectFromTopic(String topic) {
+        return createProjectFromTopic(topic, null);
+    }
+
+    @Transactional
+    public ProjectOutlineResponse createProjectFromTopic(String topic, Integer presentationDurationMinutes) {
         if (topic == null || topic.isBlank()) {
             throw new IllegalArgumentException("Topic is required");
         }
         String clean = topic.trim();
-        Long projectId = createEmptyProject(clean, clean);
+        int minutes = PresentationDurationPlanner.clampMinutes(presentationDurationMinutes);
+        Long projectId = createEmptyProject(clean, clean, minutes);
 
         String augmented = clean;
         if (outlineUseExternalRetrieval) {
@@ -96,7 +102,7 @@ public class ProjectService {
             }
         }
 
-        ProjectOutlineResponse outline = outlineGenerationService.generateOutline(augmented);
+        ProjectOutlineResponse outline = outlineGenerationService.generateOutline(augmented, minutes);
         CreateProjectRequest request = new CreateProjectRequest();
         request.setTitle(outline.getTitle() != null ? outline.getTitle() : clean);
         request.setTheme(clean);
@@ -116,9 +122,15 @@ public class ProjectService {
 
     @Transactional
     public Long createEmptyProject(String title, String theme) {
+        return createEmptyProject(title, theme, PresentationDurationPlanner.DEFAULT_MINUTES);
+    }
+
+    @Transactional
+    public Long createEmptyProject(String title, String theme, int presentationDurationMinutes) {
         Project project = new Project();
         project.setTitle(title);
         project.setTheme(theme != null ? theme : title);
+        project.setPresentationDurationMinutes(PresentationDurationPlanner.clampMinutes(presentationDurationMinutes));
         return projectRepository.save(project).getId();
     }
 
@@ -161,6 +173,9 @@ public class ProjectService {
             String b = request.getBody().trim();
             slide.setBody(b.isEmpty() ? null : request.getBody());
         }
+        if (request.getPptBullets() != null) {
+            slide.setPptBullets(new ArrayList<>(request.getPptBullets()));
+        }
         if (request.getSources() != null) {
             slide.setSources(new ArrayList<>(request.getSources()));
         }
@@ -171,11 +186,17 @@ public class ProjectService {
 
     @Transactional
     public ProjectOutlineResponse createProjectFromDocument(String title, String rawText) {
+        return createProjectFromDocument(title, rawText, null);
+    }
+
+    @Transactional
+    public ProjectOutlineResponse createProjectFromDocument(String title, String rawText, Integer presentationDurationMinutes) {
         if (rawText == null || rawText.isBlank()) {
             throw new IllegalArgumentException("Document text is required");
         }
         String safeTitle = title != null && !title.isBlank() ? title : "文档演示文稿";
-        Long projectId = createEmptyProject(safeTitle, truncate(rawText, 400));
+        int minutes = PresentationDurationPlanner.clampMinutes(presentationDurationMinutes);
+        Long projectId = createEmptyProject(safeTitle, truncate(rawText, 400), minutes);
         documentIndexingService.indexPlainText(projectId, rawText);
         String rag = documentIndexingService.buildRagContext(projectId, safeTitle + "\n" + truncate(rawText, 1500));
         String augmented = safeTitle + "\n\n上传全文节选：\n" + truncate(rawText, 3200);
@@ -202,7 +223,7 @@ public class ProjectService {
                 log.warn("Document flow: external supplement failed: {}", e.getMessage());
             }
         }
-        ProjectOutlineResponse outline = outlineGenerationService.generateOutline(augmented);
+        ProjectOutlineResponse outline = outlineGenerationService.generateOutline(augmented, minutes);
         CreateProjectRequest request = new CreateProjectRequest();
         request.setTitle(outline.getTitle() != null ? outline.getTitle() : safeTitle);
         request.setTheme(safeTitle);
@@ -213,10 +234,14 @@ public class ProjectService {
 
     @Transactional(readOnly = true)
     public ProjectOutlineResponse buildOutlineResponse(Long projectId) {
+        Project project = projectRepository.findById(projectId)
+            .orElseThrow(() -> new EntityNotFoundException("Project not found: " + projectId));
         ProjectDetailResponse detail = getProjectById(projectId);
         ProjectOutlineResponse response = new ProjectOutlineResponse();
         response.setProjectId(projectId);
         response.setTitle(detail.getTitle());
+        response.setPresentationDurationMinutes(
+            PresentationDurationPlanner.clampMinutes(project.getPresentationDurationMinutes()));
         for (ProjectDetailResponse.SlideItem slideItem : detail.getSlides()) {
             ProjectOutlineResponse.OutlineSlide outlineSlide = new ProjectOutlineResponse.OutlineSlide();
             outlineSlide.setSlideId(slideItem.getId());
@@ -247,6 +272,11 @@ public class ProjectService {
 
     @Transactional(readOnly = true)
     public ProjectDetailResponse getProjectById(Long id) {
+        return getProjectById(id, false);
+    }
+
+    @Transactional(readOnly = true)
+    public ProjectDetailResponse getProjectById(Long id, boolean includeEvaluations) {
         Project project = projectRepository.findById(id)
             .orElseThrow(() -> new EntityNotFoundException("Project not found: " + id));
 
@@ -254,17 +284,22 @@ public class ProjectService {
         response.setId(project.getId());
         response.setTitle(project.getTitle());
         response.setTheme(project.getTheme());
+        response.setPresentationDurationMinutes(
+            PresentationDurationPlanner.clampMinutes(project.getPresentationDurationMinutes()));
         response.setCreatedAt(project.getCreatedAt());
         response.setUpdatedAt(project.getUpdatedAt());
 
-        List<ProjectDetailResponse.SlideItem> slides = project.getSlides().stream()
-            .sorted(Comparator.comparing(Slide::getPosition))
+        List<ProjectDetailResponse.SlideItem> slides = slideRepository.findByProject_IdOrderByPositionAsc(id)
+            .stream()
             .map(this::toSlideResponse)
             .collect(Collectors.toList());
-
         response.setSlides(slides);
-        List<EvaluationReportResponse> evaluations = evaluationReportService.getReportsForProject(id);
-        response.setEvaluations(evaluations);
+
+        if (includeEvaluations) {
+            response.setEvaluations(evaluationReportService.getReportsForProject(id));
+        } else {
+            response.setEvaluations(List.of());
+        }
         return response;
     }
 
@@ -312,6 +347,7 @@ public class ProjectService {
         item.setTitle(slide.getTitle());
         item.setBody(slide.getBody());
         item.setBullets(slide.getBullets());
+        item.setPptBullets(slide.getPptBullets());
         item.setSources(slide.getSources());
         item.setNotes(slide.getNotes());
         return item;

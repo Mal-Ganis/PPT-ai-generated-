@@ -31,6 +31,10 @@ public class Project {
     @Column(nullable = false, columnDefinition = "TEXT")
     private String theme;
 
+    /** 用户目标演讲时长（分钟），用于约束大纲页数与正文要点密度。 */
+    @Column(name = "presentation_duration_minutes")
+    private Integer presentationDurationMinutes;
+
     @Column(nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -62,6 +66,14 @@ public class Project {
 
     public void setTheme(String theme) {
         this.theme = theme;
+    }
+
+    public Integer getPresentationDurationMinutes() {
+        return presentationDurationMinutes;
+    }
+
+    public void setPresentationDurationMinutes(Integer presentationDurationMinutes) {
+        this.presentationDurationMinutes = presentationDurationMinutes;
     }
 
     public OffsetDateTime getCreatedAt() {

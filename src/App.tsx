@@ -20,7 +20,10 @@ import {
   uploadDocumentFile,
   syncProjectOutline,
   generateSlideContents,
+  saveProjectSlides,
+  extractPptDisplayContents,
   fetchProject,
+  fetchProjectForSlides,
   type ProjectOutlineResponse,
   type ProjectDetailResponse,
   type UpsertOutlinePayload,
@@ -42,7 +45,10 @@ export interface SlideData {
   slideId?: number;
   chapter?: string;
   title: string;
+  /** 讲稿要点（可含口头衔接语，供演讲者阅读） */
   content: string[];
+  /** 适合打在幻灯片上的短要点（投影用） */
+  pptContent: string[];
   /** @deprecated 已不再生成；保留字段仅为兼容旧数据 */
   notes?: string;
   sources?: string[];
@@ -50,18 +56,21 @@ export interface SlideData {
 
 export interface OutlineData {
   title: string;
+  presentationDurationMinutes?: number;
   slides: SlideData[];
 }
 
 function mapOutlineResponse(outline: ProjectOutlineResponse): OutlineData {
   return {
     title: outline.title,
+    presentationDurationMinutes: outline.presentationDurationMinutes,
     slides: outline.slides.map((s) => ({
       id: s.slideId != null ? Number(s.slideId) : s.id,
       slideId: s.slideId != null ? Number(s.slideId) : undefined,
       chapter: s.chapter,
       title: s.title,
       content: [...s.content],
+      pptContent: [],
     })),
   };
 }
@@ -69,14 +78,20 @@ function mapOutlineResponse(outline: ProjectOutlineResponse): OutlineData {
 function mapDetailToSlides(detail: ProjectDetailResponse): SlideData[] {
   return [...detail.slides]
     .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
-    .map((s) => ({
-      id: s.id,
-      slideId: s.id,
-      chapter: s.chapter ?? undefined,
-      title: s.title,
-      content: s.bullets && s.bullets.length > 0 ? [...s.bullets] : s.body ? [s.body] : [],
-      sources: s.sources,
-    }));
+    .map((s) => {
+      const script =
+        s.bullets && s.bullets.length > 0 ? [...s.bullets] : s.body ? [s.body] : [];
+      const ppt = s.pptBullets && s.pptBullets.length > 0 ? [...s.pptBullets] : [];
+      return {
+        id: s.id,
+        slideId: s.id,
+        chapter: s.chapter ?? undefined,
+        title: s.title,
+        content: script,
+        pptContent: ppt,
+        sources: s.sources,
+      };
+    });
 }
 
 function buildOutlinePayload(title: string, theme: string, slides: SlideData[]): UpsertOutlinePayload {
@@ -110,7 +125,11 @@ export function MainFlow() {
   const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState<AppStep>('home');
   const [projectId, setProjectId] = useState<number | null>(null);
-  const [inputData, setInputData] = useState<{ type: 'topic' | 'document'; content: string } | null>(null);
+  const [inputData, setInputData] = useState<{
+    type: 'topic' | 'document';
+    content: string;
+    presentationDurationMinutes?: number;
+  } | null>(null);
   const [outlineData, setOutlineData] = useState<OutlineData | null>(null);
   const [finalSlides, setFinalSlides] = useState<SlideData[] | null>(null);
 
@@ -121,26 +140,28 @@ export function MainFlow() {
   const handleInputSubmit = async (
     type: 'topic' | 'document',
     content: string,
-    meta?: { fileName?: string; formData?: FormData },
+    meta?: { fileName?: string; formData?: FormData; presentationDurationMinutes?: number },
   ) => {
+    const duration = meta?.presentationDurationMinutes ?? 15;
     try {
       if (type === 'topic') {
-        setInputData({ type, content });
-        const result = await createProjectFromTopic(content);
+        setInputData({ type, content, presentationDurationMinutes: duration });
+        const result = await createProjectFromTopic(content, duration);
         setProjectId(result.projectId);
         setOutlineData(mapOutlineResponse(result));
       } else if (meta?.formData) {
-        const result = await uploadDocumentFile(meta.formData);
+        const result = await uploadDocumentFile(meta.formData, duration);
         setProjectId(result.projectId);
         setOutlineData(mapOutlineResponse(result));
         setInputData({
           type: 'document',
           content: result.title || meta.fileName?.replace(/\.[^/.]+$/, '') || '文档',
+          presentationDurationMinutes: duration,
         });
       } else {
-        setInputData({ type, content });
+        setInputData({ type, content, presentationDurationMinutes: duration });
         const docTitle = meta?.fileName?.replace(/\.[^/.]+$/, '') || '上传文档';
-        const result = await createProjectFromDocument(docTitle, content);
+        const result = await createProjectFromDocument(docTitle, content, duration);
         setProjectId(result.projectId);
         setOutlineData(mapOutlineResponse(result));
       }
@@ -150,7 +171,10 @@ export function MainFlow() {
     }
   };
 
-  const handleOutlineConfirm = async (slides: SlideData[]) => {
+  const handleOutlineConfirm = async (
+    slides: SlideData[],
+    reportProgress?: (message: string) => void,
+  ) => {
     if (!projectId || !outlineData) {
       alert('缺少项目上下文，请返回重新输入。');
       return;
@@ -161,20 +185,84 @@ export function MainFlow() {
         projectId,
         buildOutlinePayload(outlineData.title, inputData?.content ?? outlineData.title, slides),
       );
-      const detail = await generateSlideContents(projectId, {
-        inputType: inputData?.type ?? 'topic',
-        inputContent: inputData?.content ?? '',
-      });
+      reportProgress?.('已同步大纲，正在排队生成正文…');
+      const detail = await generateSlideContents(
+        projectId,
+        {
+          inputType: inputData?.type ?? 'topic',
+          inputContent: inputData?.content ?? '',
+        },
+        (st) => {
+          const msg =
+            st.message?.trim() ||
+            (st.totalSlides > 0
+              ? `正在生成第 ${st.completedSlides} / ${st.totalSlides} 页…`
+              : '正在生成幻灯片内容…');
+          reportProgress?.(msg);
+        },
+      );
       setFinalSlides(mapDetailToSlides(detail));
       setCurrentStep('content');
     } catch (error) {
       console.error('Error generating content:', error);
+      if (projectId) {
+        try {
+          const recovered = await fetchProjectForSlides(projectId);
+          const ready = recovered.slides.filter((s) => (s.bullets?.length ?? 0) > 0).length;
+          if (ready > 0) {
+            setFinalSlides(mapDetailToSlides(recovered));
+            setCurrentStep('content');
+            reportProgress?.('连接中断，已从服务器恢复已生成的页面');
+          }
+        } catch {
+          // ignore secondary failure
+        }
+      }
     }
   };
 
-  const handleContentConfirm = async (slides: SlideData[]) => {
-    setFinalSlides(slides);
-    setCurrentStep('preview');
+  const handleContentConfirm = async (
+    slides: SlideData[],
+    reportProgress?: (message: string) => void,
+  ) => {
+    if (!projectId) {
+      setFinalSlides(slides);
+      setCurrentStep('preview');
+      return;
+    }
+    try {
+      reportProgress?.('正在保存讲稿…');
+      const toSave = slides.filter((s) => s.slideId != null) as Array<
+        SlideData & { slideId: number }
+      >;
+      await saveProjectSlides(
+        projectId,
+        toSave.map((s) => ({
+          slideId: s.slideId,
+          bullets: s.content,
+          pptBullets: s.pptContent?.length ? s.pptContent : undefined,
+        })),
+      );
+      {
+        reportProgress?.('正在提炼适合 PPT 的短要点（DeepSeek）…');
+        const detail = await extractPptDisplayContents(projectId, {
+          onProgress: (st) => {
+            const msg =
+              st.message?.trim() ||
+              (st.totalSlides > 0
+                ? `提炼中 ${st.completedSlides} / ${st.totalSlides} 页…`
+                : '正在提炼…');
+            reportProgress?.(msg);
+          },
+        });
+        setFinalSlides(mapDetailToSlides(detail));
+      }
+      setCurrentStep('preview');
+    } catch (e) {
+      console.error(e);
+      setFinalSlides(slides);
+      setCurrentStep('preview');
+    }
   };
 
   const handleReset = useCallback(() => {
@@ -204,6 +292,7 @@ export function MainFlow() {
       setInputData({ type: 'topic', content: detail.theme });
       setOutlineData({
         title: detail.title,
+        presentationDurationMinutes: detail.presentationDurationMinutes,
         slides: mapDetailToSlides(detail).map((s) => ({
           ...s,
           content: s.content.length ? s.content : ['（待编辑要点）'],
@@ -294,6 +383,7 @@ export function MainFlow() {
           projectId={projectId}
           slides={finalSlides}
           title={outlineData?.title || 'PPT演示文稿'}
+          onSlidesChange={setFinalSlides}
           onReset={handleReset}
           onBack={() => setCurrentStep('content')}
         />

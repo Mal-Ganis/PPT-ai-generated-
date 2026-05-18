@@ -10,6 +10,7 @@ public class ProjectDetailResponse {
     private Long id;
     private String title;
     private String theme;
+    private Integer presentationDurationMinutes;
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;
     private List<SlideItem> slides;
@@ -37,6 +38,14 @@ public class ProjectDetailResponse {
 
     public void setTheme(String theme) {
         this.theme = theme;
+    }
+
+    public Integer getPresentationDurationMinutes() {
+        return presentationDurationMinutes;
+    }
+
+    public void setPresentationDurationMinutes(Integer presentationDurationMinutes) {
+        this.presentationDurationMinutes = presentationDurationMinutes;
     }
 
     public OffsetDateTime getCreatedAt() {
@@ -78,6 +87,7 @@ public class ProjectDetailResponse {
         private String title;
         private String body;
         private List<String> bullets;
+        private List<String> pptBullets;
         private List<String> sources;
         private String notes;
 
@@ -127,6 +137,14 @@ public class ProjectDetailResponse {
 
         public void setBullets(List<String> bullets) {
             this.bullets = bullets;
+        }
+
+        public List<String> getPptBullets() {
+            return pptBullets;
+        }
+
+        public void setPptBullets(List<String> pptBullets) {
+            this.pptBullets = pptBullets;
         }
 
         public List<String> getSources() {
