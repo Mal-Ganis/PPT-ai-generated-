@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom';
 import { ArrowRight, ArrowLeft, Plus, Trash2, GripVertical, Sparkles, Loader2 } from 'lucide-react';
 import { FlowExitNav } from '@/components/FlowExitNav';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { reorderSlidesArray } from '@/lib/slideOrder';
+import { persistSlideBullets, persistSlideTitle } from '@/lib/slideStructure';
 import { cn } from '@/lib/utils';
 import type { OutlineData, SlideData } from '../App';
 
@@ -20,6 +22,24 @@ const OutlineSection = ({ projectId, outline, onConfirm, onBack }: OutlineSectio
   useEffect(() => {
     setSlides(outline.slides);
   }, [outline]);
+
+  const patchSlide = (index: number, patch: Partial<SlideData>) => {
+    setSlides((prev) => {
+      const next = [...prev];
+      next[index] = { ...next[index], ...patch };
+      return next;
+    });
+  };
+
+  const persistSlideIfSaved = async (slide: SlideData) => {
+    if (projectId == null || slide.slideId == null) return;
+    try {
+      await persistSlideTitle(projectId, slide, slide.title);
+      await persistSlideBullets(projectId, slide);
+    } catch {
+      // 生成内容前会再次同步大纲
+    }
+  };
 
   const structureHints = useMemo(() => {
     const titles = slides.map((s) => s.title.toLowerCase());
@@ -43,6 +63,7 @@ const OutlineSection = ({ projectId, outline, onConfirm, onBack }: OutlineSectio
     }
     return hints;
   }, [slides, outline.presentationDurationMinutes]);
+
   const [isLoading, setIsLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const [dragFromIndex, setDragFromIndex] = useState<number | null>(null);
@@ -55,7 +76,7 @@ const OutlineSection = ({ projectId, outline, onConfirm, onBack }: OutlineSectio
       content: ['要点1', '要点2'],
       pptContent: [],
     };
-    setSlides([...slides, newSlide]);
+    setSlides((prev) => [...prev, newSlide]);
   };
 
   const handleDeleteSlide = (id: number) => {
@@ -63,14 +84,14 @@ const OutlineSection = ({ projectId, outline, onConfirm, onBack }: OutlineSectio
       alert('至少需要保留一页');
       return;
     }
-    setSlides(slides.filter((s) => s.id !== id));
+    setSlides((prev) => prev.filter((s) => s.id !== id));
   };
 
   const handleMoveSlide = (index: number, direction: 'up' | 'down') => {
     if (direction === 'up' && index === 0) return;
     if (direction === 'down' && index === slides.length - 1) return;
     const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    setSlides(reorderSlidesArray(slides, index, targetIndex));
+    setSlides((prev) => reorderSlidesArray(prev, index, targetIndex));
   };
 
   const finishOutlineDrag = () => {
@@ -83,8 +104,52 @@ const OutlineSection = ({ projectId, outline, onConfirm, onBack }: OutlineSectio
       finishOutlineDrag();
       return;
     }
-    setSlides(reorderSlidesArray(slides, dragFromIndex, toIndex));
+    setSlides((prev) => reorderSlidesArray(prev, dragFromIndex, toIndex));
     finishOutlineDrag();
+  };
+
+  const updateBullet = (slideIndex: number, bulletIndex: number, value: string) => {
+    setSlides((prev) => {
+      const next = [...prev];
+      const content = [...next[slideIndex].content];
+      content[bulletIndex] = value;
+      next[slideIndex] = { ...next[slideIndex], content };
+      return next;
+    });
+  };
+
+  const addBullet = (slideIndex: number) => {
+    setSlides((prev) => {
+      const next = [...prev];
+      next[slideIndex] = {
+        ...next[slideIndex],
+        content: [...next[slideIndex].content, '新要点'],
+      };
+      return next;
+    });
+  };
+
+  const removeBullet = (slideIndex: number, bulletIndex: number) => {
+    setSlides((prev) => {
+      if (prev[slideIndex].content.length <= 1) {
+        alert('每页至少保留一条要点');
+        return prev;
+      }
+      const next = [...prev];
+      next[slideIndex] = {
+        ...next[slideIndex],
+        content: prev[slideIndex].content.filter((_, i) => i !== bulletIndex),
+      };
+      return next;
+    });
+  };
+
+  const handleSlideBlur = (slideIndex: number) => {
+    setSlides((prev) => {
+      const slide = prev[slideIndex];
+      if (slide) void persistSlideIfSaved(slide);
+      return prev;
+    });
   };
 
   const handleConfirm = async () => {
@@ -186,15 +251,16 @@ const OutlineSection = ({ projectId, outline, onConfirm, onBack }: OutlineSectio
                     <button
                       type="button"
                       onClick={() => handleMoveSlide(index, 'up')}
-                      disabled={index === 0}
+                      disabled={index === 0 || isLoading}
                       className="p-1 hover:bg-gray-100 rounded disabled:opacity-30 disabled:cursor-not-allowed"
+                      aria-label="上移"
                     >
                       <svg className="w-4 h-4 text-[#1f1f1f]/40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
                       </svg>
                     </button>
                     <span
-                      draggable
+                      draggable={!isLoading}
                       onDragStart={(e) => {
                         setDragFromIndex(index);
                         e.dataTransfer.effectAllowed = 'move';
@@ -209,8 +275,9 @@ const OutlineSection = ({ projectId, outline, onConfirm, onBack }: OutlineSectio
                     <button
                       type="button"
                       onClick={() => handleMoveSlide(index, 'down')}
-                      disabled={index === slides.length - 1}
+                      disabled={index === slides.length - 1 || isLoading}
                       className="p-1 hover:bg-gray-100 rounded disabled:opacity-30 disabled:cursor-not-allowed"
+                      aria-label="下移"
                     >
                       <svg className="w-4 h-4 text-[#1f1f1f]/40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -222,40 +289,81 @@ const OutlineSection = ({ projectId, outline, onConfirm, onBack }: OutlineSectio
                     <span className="text-sm font-bold text-[#3898ec]">{index + 1}</span>
                   </div>
 
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex-1 min-w-0 space-y-3">
+                    <div className="flex items-start gap-2 flex-wrap">
                       {slide.chapter ? (
-                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-[#e7f0ff] text-[#0f5abb] shrink-0">
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-[#e7f0ff] text-[#0f5abb] shrink-0 mt-2">
                           {slide.chapter}
                         </span>
                       ) : null}
-                      <h3 className="text-lg font-semibold text-[#1f1f1f]">{slide.title}</h3>
+                      <div className="flex-1 min-w-[12rem] space-y-1">
+                        <label className="text-xs text-[#1f1f1f]/50">页面标题</label>
+                        <Input
+                          value={slide.title}
+                          onChange={(e) => patchSlide(index, { title: e.target.value })}
+                          onBlur={() => handleSlideBlur(index)}
+                          disabled={isLoading}
+                          className="font-semibold"
+                        />
+                      </div>
                       {projectId != null && slide.slideId != null && (
                         <Link
                           to={`/project/${projectId}/slide/${slide.slideId}`}
-                          className="text-sm font-medium text-[#3898ec] hover:underline shrink-0"
+                          className="text-sm font-medium text-[#3898ec] hover:underline shrink-0 mt-7"
                         >
-                          单页详情（编辑）
+                          高级编辑
                         </Link>
                       )}
                     </div>
 
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {slide.content.map((item, idx) => (
-                        <span
-                          key={idx}
-                          className="px-3 py-1 bg-[#f3f3f3] text-[#1f1f1f]/70 rounded-full text-sm"
-                        >
-                          {item}
-                        </span>
-                      ))}
+                    <div>
+                      <label className="text-xs text-[#1f1f1f]/50 block mb-2">纲要要点</label>
+                      <div className="space-y-2">
+                        {slide.content.map((item, idx) => (
+                          <div key={`${slide.id}-b-${idx}`} className="flex items-center gap-2">
+                            <span className="text-xs text-[#3898ec] font-medium w-5 shrink-0 text-center">
+                              {idx + 1}
+                            </span>
+                            <Input
+                              value={item}
+                              onChange={(e) => updateBullet(index, idx, e.target.value)}
+                              onBlur={() => handleSlideBlur(index)}
+                              disabled={isLoading}
+                              className="flex-1"
+                              placeholder="输入本页要点"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => removeBullet(index, idx)}
+                              disabled={isLoading || slide.content.length <= 1}
+                              className="p-2 hover:bg-red-50 text-[#1f1f1f]/40 hover:text-red-500 rounded-lg transition-colors disabled:opacity-30"
+                              aria-label="删除要点"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => addBullet(index)}
+                        disabled={isLoading}
+                        className="mt-2 border-dashed"
+                      >
+                        <Plus className="w-4 h-4 mr-1" />
+                        添加要点
+                      </Button>
                     </div>
                   </div>
 
                   <button
                     type="button"
                     onClick={() => handleDeleteSlide(slide.id)}
+                    disabled={isLoading}
                     className="p-2 hover:bg-red-50 text-[#1f1f1f]/40 hover:text-red-500 rounded-lg transition-colors"
+                    aria-label="删除本页"
                   >
                     <Trash2 className="w-5 h-5" />
                   </button>
@@ -267,7 +375,8 @@ const OutlineSection = ({ projectId, outline, onConfirm, onBack }: OutlineSectio
           <button
             type="button"
             onClick={handleAddSlide}
-            className="w-full py-4 border-2 border-dashed border-gray-300 hover:border-[#3898ec] rounded-xl text-[#1f1f1f]/50 hover:text-[#3898ec] transition-all duration-300 flex items-center justify-center gap-2"
+            disabled={isLoading}
+            className="w-full py-4 border-2 border-dashed border-gray-300 hover:border-[#3898ec] rounded-xl text-[#1f1f1f]/50 hover:text-[#3898ec] transition-all duration-300 flex items-center justify-center gap-2 disabled:opacity-50"
           >
             <Plus className="w-5 h-5" />
             添加页面
@@ -275,7 +384,7 @@ const OutlineSection = ({ projectId, outline, onConfirm, onBack }: OutlineSectio
 
           <div className="mt-8 p-4 bg-[#3898ec]/5 rounded-xl">
             <p className="text-sm text-[#3898ec]">
-              提示：拖拽左侧 ≡ 图标（或使用上下箭头）调整顺序；可增删页。标题与正文请在「单页详情」中编辑并保存。
+              提示：可直接编辑每页标题与纲要要点（含手动添加的新页）；拖拽 ≡ 调整顺序。已有后端记录的页失焦时会自动保存；新页在点击「生成内容」时一并同步。
             </p>
           </div>
         </div>
