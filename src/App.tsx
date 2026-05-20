@@ -25,10 +25,9 @@ import {
   fetchProject,
   fetchProjectForSlides,
   type ProjectOutlineResponse,
-  type ProjectDetailResponse,
-  type UpsertOutlinePayload,
   type SystemConfig,
 } from './lib/backend';
+import { buildOutlinePayload, mapDetailToSlides } from './lib/slideMappers';
 
 export type AppStep =
   | 'home'
@@ -71,39 +70,6 @@ function mapOutlineResponse(outline: ProjectOutlineResponse): OutlineData {
       title: s.title,
       content: [...s.content],
       pptContent: [],
-    })),
-  };
-}
-
-function mapDetailToSlides(detail: ProjectDetailResponse): SlideData[] {
-  return [...detail.slides]
-    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
-    .map((s) => {
-      const script =
-        s.bullets && s.bullets.length > 0 ? [...s.bullets] : s.body ? [s.body] : [];
-      const ppt = s.pptBullets && s.pptBullets.length > 0 ? [...s.pptBullets] : [];
-      return {
-        id: s.id,
-        slideId: s.id,
-        chapter: s.chapter ?? undefined,
-        title: s.title,
-        content: script,
-        pptContent: ppt,
-        sources: s.sources,
-      };
-    });
-}
-
-function buildOutlinePayload(title: string, theme: string, slides: SlideData[]): UpsertOutlinePayload {
-  return {
-    title,
-    theme,
-    slides: slides.map((s, index) => ({
-      position: index + 1,
-      chapter: s.chapter,
-      title: s.title,
-      bullets: s.content,
-      sources: s.sources,
     })),
   };
 }
@@ -371,8 +337,11 @@ export function MainFlow() {
         <ContentSection
           projectId={projectId}
           slides={finalSlides}
+          deckTitle={outlineData?.title ?? 'PPT演示文稿'}
+          deckTheme={inputData?.content ?? outlineData?.title ?? ''}
           inputType={inputData?.type ?? 'topic'}
           inputContent={inputData?.content ?? ''}
+          onSlidesChange={setFinalSlides}
           onConfirm={handleContentConfirm}
           onBack={() => setCurrentStep('outline')}
         />
@@ -383,6 +352,9 @@ export function MainFlow() {
           projectId={projectId}
           slides={finalSlides}
           title={outlineData?.title || 'PPT演示文稿'}
+          deckTheme={inputData?.content ?? outlineData?.title ?? ''}
+          inputType={inputData?.type ?? 'topic'}
+          inputContent={inputData?.content ?? ''}
           onSlidesChange={setFinalSlides}
           onReset={handleReset}
           onBack={() => setCurrentStep('content')}

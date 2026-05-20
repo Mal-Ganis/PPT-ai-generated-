@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { ArrowRight, ArrowLeft, Plus, Trash2, GripVertical, Sparkles, Loader2 } from 'lucide-react';
 import { FlowExitNav } from '@/components/FlowExitNav';
 import { Button } from '@/components/ui/button';
+import { reorderSlidesArray } from '@/lib/slideOrder';
+import { cn } from '@/lib/utils';
 import type { OutlineData, SlideData } from '../App';
 
 interface OutlineSectionProps {
@@ -43,12 +45,15 @@ const OutlineSection = ({ projectId, outline, onConfirm, onBack }: OutlineSectio
   }, [slides, outline.presentationDurationMinutes]);
   const [isLoading, setIsLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
+  const [dragFromIndex, setDragFromIndex] = useState<number | null>(null);
+  const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
 
   const handleAddSlide = () => {
     const newSlide: SlideData = {
       id: Date.now(),
       title: '新页面',
       content: ['要点1', '要点2'],
+      pptContent: [],
     };
     setSlides([...slides, newSlide]);
   };
@@ -64,11 +69,22 @@ const OutlineSection = ({ projectId, outline, onConfirm, onBack }: OutlineSectio
   const handleMoveSlide = (index: number, direction: 'up' | 'down') => {
     if (direction === 'up' && index === 0) return;
     if (direction === 'down' && index === slides.length - 1) return;
-
-    const newSlides = [...slides];
     const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    [newSlides[index], newSlides[targetIndex]] = [newSlides[targetIndex], newSlides[index]];
-    setSlides(newSlides);
+    setSlides(reorderSlidesArray(slides, index, targetIndex));
+  };
+
+  const finishOutlineDrag = () => {
+    setDragFromIndex(null);
+    setDropTargetIndex(null);
+  };
+
+  const handleOutlineDrop = (toIndex: number) => {
+    if (dragFromIndex == null || dragFromIndex === toIndex) {
+      finishOutlineDrag();
+      return;
+    }
+    setSlides(reorderSlidesArray(slides, dragFromIndex, toIndex));
+    finishOutlineDrag();
   };
 
   const handleConfirm = async () => {
@@ -144,10 +160,29 @@ const OutlineSection = ({ projectId, outline, onConfirm, onBack }: OutlineSectio
             {slides.map((slide, index) => (
               <div
                 key={slide.id}
-                className="bg-white rounded-xl shadow-md hover:shadow-lg transition-shadow duration-300 p-5"
+                className={cn(
+                  'bg-white rounded-xl shadow-md hover:shadow-lg transition-shadow duration-300 p-5',
+                  dropTargetIndex === index &&
+                    dragFromIndex != null &&
+                    dragFromIndex !== index &&
+                    'ring-2 ring-[#3898ec] ring-offset-2',
+                )}
+                onDragOver={(e) => {
+                  if (dragFromIndex == null) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                  setDropTargetIndex(index);
+                }}
+                onDragLeave={() => {
+                  if (dropTargetIndex === index) setDropTargetIndex(null);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  handleOutlineDrop(index);
+                }}
               >
                 <div className="flex items-start gap-4">
-                  <div className="flex flex-col gap-1 pt-1">
+                  <div className="flex flex-col gap-1 pt-1 items-center">
                     <button
                       type="button"
                       onClick={() => handleMoveSlide(index, 'up')}
@@ -158,7 +193,19 @@ const OutlineSection = ({ projectId, outline, onConfirm, onBack }: OutlineSectio
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
                       </svg>
                     </button>
-                    <GripVertical className="w-4 h-4 text-[#1f1f1f]/30" />
+                    <span
+                      draggable
+                      onDragStart={(e) => {
+                        setDragFromIndex(index);
+                        e.dataTransfer.effectAllowed = 'move';
+                        e.dataTransfer.setData('text/plain', String(index));
+                      }}
+                      onDragEnd={finishOutlineDrag}
+                      className="p-1 cursor-grab active:cursor-grabbing text-[#1f1f1f]/30 hover:text-[#3898ec]"
+                      title="拖拽以调整顺序"
+                    >
+                      <GripVertical className="w-4 h-4" />
+                    </span>
                     <button
                       type="button"
                       onClick={() => handleMoveSlide(index, 'down')}
@@ -228,7 +275,7 @@ const OutlineSection = ({ projectId, outline, onConfirm, onBack }: OutlineSectio
 
           <div className="mt-8 p-4 bg-[#3898ec]/5 rounded-xl">
             <p className="text-sm text-[#3898ec]">
-              提示：此处仅调整页面顺序、增删页；标题与正文请在「单页详情」中编辑并保存，保存仅影响当前页。
+              提示：拖拽左侧 ≡ 图标（或使用上下箭头）调整顺序；可增删页。标题与正文请在「单页详情」中编辑并保存。
             </p>
           </div>
         </div>

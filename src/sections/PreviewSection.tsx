@@ -8,10 +8,21 @@ import {
   Presentation,
   Loader2,
   Sparkles,
+  Plus,
+  Trash2,
 } from 'lucide-react';
+import { SlideTitleSortList } from '@/components/SlideTitleSortList';
 import { FlowExitNav } from '@/components/FlowExitNav';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { findSlideIndexByAnchor, reorderSlidesArray, slideAnchor } from '@/lib/slideOrder';
+import {
+  addProjectSlide,
+  deleteProjectSlide,
+  persistSlideTitle,
+  reorderProjectSlides,
+} from '@/lib/slideStructure';
 import {
   extractPptDisplayContents,
   extractPptDisplayForSlide,
@@ -19,26 +30,19 @@ import {
   updateProjectSlide,
   type EvaluationReport,
 } from '@/lib/backend';
+import { bulletsToEditableText, editableTextToBullets } from '@/lib/bulletsText';
 import type { SlideData } from '../App';
 
 interface PreviewSectionProps {
   projectId?: number | null;
   slides: SlideData[];
   title: string;
+  deckTheme: string;
+  inputType: 'topic' | 'document';
+  inputContent: string;
   onSlidesChange: (slides: SlideData[]) => void;
   onReset: () => void;
   onBack: () => void;
-}
-
-function linesToBullets(text: string): string[] {
-  return text
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean);
-}
-
-function bulletsToLines(bullets: string[]): string {
-  return bullets.join('\n');
 }
 
 function bulletsEqual(a: string[], b: string[]): boolean {
@@ -61,6 +65,9 @@ const PreviewSection = ({
   projectId,
   slides: initialSlides,
   title,
+  deckTheme,
+  inputType,
+  inputContent,
   onSlidesChange,
   onReset,
   onBack,
@@ -70,20 +77,101 @@ const PreviewSection = ({
   const [latestEval, setLatestEval] = useState<EvaluationReport | null>(null);
   const [extractMessage, setExtractMessage] = useState('');
   const [isExtracting, setIsExtracting] = useState(false);
+  const [isStructuring, setIsStructuring] = useState(false);
   const [saveHint, setSaveHint] = useState('');
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const slidesRef = useRef(slides);
+  const currentSlideIndexRef = useRef(currentSlideIndex);
   const autoExtractStartedRef = useRef(false);
+  const draftSkipCommitRef = useRef(true);
 
-  useEffect(() => {
-    setSlides(initialSlides);
-    slidesRef.current = initialSlides;
-  }, [initialSlides]);
+  const [scriptDraft, setScriptDraft] = useState('');
+  const [pptDraft, setPptDraft] = useState('');
+
+  currentSlideIndexRef.current = currentSlideIndex;
+
+  const applySlides = useCallback(
+    (next: SlideData[]) => {
+      setSlides(next);
+      slidesRef.current = next;
+      onSlidesChange(next);
+    },
+    [onSlidesChange],
+  );
+
+  const loadDraftFromSlide = useCallback((slide: SlideData | undefined) => {
+    if (!slide) return;
+    setScriptDraft(bulletsToEditableText(slide.content));
+    setPptDraft(bulletsToEditableText(slide.pptContent));
+  }, []);
+
+  const persistCurrentSlide = useCallback(
+    (slide: SlideData) => {
+      if (projectId == null || slide.slideId == null) return;
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = setTimeout(async () => {
+        setSaveHint('保存中…');
+        try {
+          await updateProjectSlide(projectId, slide.slideId!, {
+            title: slide.title,
+            bullets: slide.content,
+            pptBullets: slide.pptContent,
+          });
+          setSaveHint('已自动保存');
+        } catch {
+          setSaveHint('保存失败');
+        }
+      }, 1000);
+    },
+    [projectId],
+  );
+
+  const flushDraftsToSlides = useCallback(
+    (scriptText: string, pptText: string) => {
+      const idx = currentSlideIndexRef.current;
+      const content = editableTextToBullets(scriptText);
+      const pptContent = editableTextToBullets(pptText);
+      setSlides((prev) => {
+        const cur = prev[idx];
+        if (!cur) return prev;
+        const unchanged =
+          bulletsEqual(cur.content, content) && bulletsEqual(cur.pptContent, pptContent);
+        if (unchanged) return prev;
+        const next = [...prev];
+        next[idx] = { ...cur, content, pptContent };
+        slidesRef.current = next;
+        onSlidesChange(next);
+        persistCurrentSlide(next[idx]);
+        return next;
+      });
+    },
+    [onSlidesChange, persistCurrentSlide],
+  );
 
   useEffect(() => {
     slidesRef.current = slides;
-    onSlidesChange(slides);
-  }, [slides, onSlidesChange]);
+  }, [slides]);
+
+  useEffect(() => {
+    draftSkipCommitRef.current = true;
+    loadDraftFromSlide(slidesRef.current[currentSlideIndex]);
+    const id = window.setTimeout(() => {
+      draftSkipCommitRef.current = false;
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [currentSlideIndex, loadDraftFromSlide]);
+
+  useEffect(() => {
+    if (draftSkipCommitRef.current) return;
+    if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+    draftSaveTimerRef.current = setTimeout(() => {
+      flushDraftsToSlides(scriptDraft, pptDraft);
+    }, 800);
+    return () => {
+      if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+    };
+  }, [scriptDraft, pptDraft, flushDraftsToSlides]);
 
   const currentSlide = slides[currentSlideIndex];
   const displayBullets = currentSlide?.pptContent ?? [];
@@ -142,7 +230,8 @@ const PreviewSection = ({
               sources: s.sources ?? prev?.sources,
             };
           });
-        setSlides(mapped);
+        applySlides(mapped);
+        loadDraftFromSlide(mapped[currentSlideIndexRef.current]);
         setExtractMessage('提炼完成');
       } catch (e) {
         setExtractMessage(e instanceof Error ? e.message : '提炼失败');
@@ -150,7 +239,7 @@ const PreviewSection = ({
         setIsExtracting(false);
       }
     },
-    [projectId],
+    [projectId, applySlides, loadDraftFromSlide],
   );
 
   useEffect(() => {
@@ -160,30 +249,12 @@ const PreviewSection = ({
     void runExtractAll(true);
   }, [projectId, runExtractAll]);
 
-  const persistCurrentSlide = useCallback(
-    (slide: SlideData) => {
-      if (projectId == null || slide.slideId == null) return;
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = setTimeout(async () => {
-        setSaveHint('保存中…');
-        try {
-          await updateProjectSlide(projectId, slide.slideId!, {
-            bullets: slide.content,
-            pptBullets: slide.pptContent,
-          });
-          setSaveHint('已自动保存');
-        } catch {
-          setSaveHint('保存失败');
-        }
-      }, 700);
-    },
-    [projectId],
-  );
-
   const updateSlideAt = (index: number, patch: Partial<SlideData>) => {
     setSlides((prev) => {
       const next = [...prev];
       next[index] = { ...next[index], ...patch };
+      slidesRef.current = next;
+      onSlidesChange(next);
       persistCurrentSlide(next[index]);
       return next;
     });
@@ -196,6 +267,7 @@ const PreviewSection = ({
     try {
       const ppt = await extractPptDisplayForSlide(projectId, currentSlide.slideId);
       updateSlideAt(currentSlideIndex, { pptContent: ppt });
+      setPptDraft(bulletsToEditableText(ppt));
       setExtractMessage('本页提炼完成');
     } catch (e) {
       setExtractMessage(e instanceof Error ? e.message : '本页提炼失败');
@@ -207,6 +279,103 @@ const PreviewSection = ({
   const goToPrevSlide = () => setCurrentSlideIndex((i) => Math.max(0, i - 1));
   const goToNextSlide = () =>
     setCurrentSlideIndex((i) => Math.min(slides.length - 1, i + 1));
+
+  const busy = isExtracting || isStructuring;
+
+  const handleTitleBlur = async () => {
+    if (!currentSlide || projectId == null) return;
+    try {
+      await persistSlideTitle(projectId, currentSlide, currentSlide.title);
+      setSaveHint('标题已保存');
+    } catch {
+      setSaveHint('标题保存失败');
+    }
+  };
+
+  const handleReorderSlides = async (fromIndex: number, toIndex: number) => {
+    if (projectId == null || fromIndex === toIndex) return;
+    const anchor = slideAnchor(slides[currentSlideIndex]);
+    const reordered = reorderSlidesArray(slides, fromIndex, toIndex);
+    setIsStructuring(true);
+    setExtractMessage('正在保存页面顺序…');
+    try {
+      const merged = await reorderProjectSlides(projectId, title, deckTheme, reordered);
+      const idx = findSlideIndexByAnchor(merged, anchor);
+      const nextIndex = idx >= 0 ? idx : toIndex;
+      applySlides(merged);
+      setCurrentSlideIndex(nextIndex);
+      loadDraftFromSlide(merged[nextIndex]);
+      setExtractMessage('页面顺序已更新');
+    } catch (e) {
+      setExtractMessage(e instanceof Error ? e.message : '调整顺序失败');
+    } finally {
+      setIsStructuring(false);
+    }
+  };
+
+  const handleAddPage = async () => {
+    if (projectId == null) return;
+    setIsStructuring(true);
+    setExtractMessage('正在添加页面…');
+    try {
+      const { slides: merged, newIndex } = await addProjectSlide(
+        projectId,
+        title,
+        deckTheme,
+        slides,
+        { inputType, inputContent, regenerateContent: false },
+      );
+      let resultSlides = merged;
+      setCurrentSlideIndex(newIndex);
+      const added = merged[newIndex];
+      if (added?.slideId) {
+        try {
+          const ppt = await extractPptDisplayForSlide(projectId, added.slideId);
+          const withPpt = [...merged];
+          withPpt[newIndex] = { ...added, pptContent: ppt };
+          resultSlides = withPpt;
+        } catch {
+          // 用户可手动填写 PPT 要点
+        }
+      }
+      applySlides(resultSlides);
+      loadDraftFromSlide(resultSlides[newIndex]);
+      setExtractMessage('已添加新页面');
+    } catch (e) {
+      setExtractMessage(e instanceof Error ? e.message : '添加页面失败');
+    } finally {
+      setIsStructuring(false);
+    }
+  };
+
+  const handleDeletePage = async () => {
+    if (projectId == null || !currentSlide) return;
+    if (slides.length <= 1) {
+      alert('至少需要保留一页');
+      return;
+    }
+    if (!confirm(`确定删除第 ${currentSlideIndex + 1} 页「${currentSlide.title}」？`)) return;
+    setIsStructuring(true);
+    setExtractMessage('正在删除页面…');
+    try {
+      const merged = await deleteProjectSlide(
+        projectId,
+        title,
+        deckTheme,
+        slides,
+        currentSlideIndex,
+      );
+      const nextIndex = Math.min(currentSlideIndex, merged.length - 1);
+      applySlides(merged);
+      setCurrentSlideIndex(nextIndex);
+      loadDraftFromSlide(merged[nextIndex]);
+      setExtractMessage('已删除页面');
+    } catch (e) {
+      setExtractMessage(e instanceof Error ? e.message : '删除页面失败');
+    } finally {
+      setIsStructuring(false);
+    }
+  };
 
   const handleDownloadMarkdown = () => {
     let markdown = `# ${title}\n\n`;
@@ -292,22 +461,17 @@ const PreviewSection = ({
             </div>
           )}
 
-          <div className="flex items-center justify-between gap-4 mb-4">
-            <div className="flex items-center gap-2 overflow-x-auto pb-1">
-              {slides.map((slide, index) => (
-                <button
-                  key={slide.slideId ?? slide.id}
-                  type="button"
-                  onClick={() => setCurrentSlideIndex(index)}
-                  className={`shrink-0 px-3 py-1.5 rounded-lg text-sm transition-all ${
-                    index === currentSlideIndex
-                      ? 'bg-[#3898ec] text-white'
-                      : 'bg-white text-[#1f1f1f]/70 hover:bg-gray-50'
-                  }`}
-                >
-                  {index + 1}. {slide.title}
-                </button>
-              ))}
+          <div className="flex items-center justify-between gap-4 mb-4 flex-wrap">
+            <div className="flex-1 min-w-0">
+              <p className="text-xs text-[#1f1f1f]/45 mb-1.5">拖拽 ≡ 或标题标签可调整顺序</p>
+              <SlideTitleSortList
+                slides={slides}
+                currentIndex={currentSlideIndex}
+                onSelect={setCurrentSlideIndex}
+                onReorder={(from, to) => void handleReorderSlides(from, to)}
+                disabled={busy}
+                layout="horizontal"
+              />
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <button
@@ -341,16 +505,30 @@ const PreviewSection = ({
                 <div className="flex items-center gap-2 mb-2 text-sm font-semibold text-[#1f1f1f] shrink-0 min-h-[1.25rem]">
                   文稿与要点
                 </div>
+                <div className="mb-3 space-y-1.5">
+                  <label className="text-xs font-medium text-[#1f1f1f]/50">页面标题</label>
+                  <Input
+                    value={currentSlide.title}
+                    onChange={(e) =>
+                      updateSlideAt(currentSlideIndex, { title: e.target.value })
+                    }
+                    onBlur={() => void handleTitleBlur()}
+                    disabled={busy}
+                    className="font-semibold"
+                  />
+                </div>
                 <div className="flex flex-col gap-4 lg:min-h-[min(78vh,760px)]">
                   <div className="flex flex-col flex-[3] min-h-[220px] lg:min-h-[400px] bg-white rounded-2xl shadow-lg p-4">
                   <h2 className="text-sm font-semibold text-[#1f1f1f] mb-1">文稿内容</h2>
-                  <p className="text-xs text-[#1f1f1f]/50 mb-2">可含衔接语、完整句，供演讲使用</p>
+                  <p className="text-xs text-[#1f1f1f]/50 mb-2">
+                    回车可换行；每行一条要点（保存时空行会自动忽略）
+                  </p>
                   <Textarea
                     className="flex-1 min-h-[180px] lg:min-h-[340px] resize-y text-sm leading-relaxed"
-                    value={bulletsToLines(currentSlide.content)}
-                    onChange={(e) =>
-                      updateSlideAt(currentSlideIndex, { content: linesToBullets(e.target.value) })
-                    }
+                    value={scriptDraft}
+                    onChange={(e) => setScriptDraft(e.target.value)}
+                    onBlur={() => flushDraftsToSlides(scriptDraft, pptDraft)}
+                    disabled={busy}
                   />
                   </div>
 
@@ -366,13 +544,15 @@ const PreviewSection = ({
                       本页重新提炼
                     </Button>
                   </div>
-                  <p className="text-xs text-[#1f1f1f]/50 mb-2">短句、关键词，适合打在幻灯片上</p>
+                  <p className="text-xs text-[#1f1f1f]/50 mb-2">
+                    回车可换行；每行一条投影要点
+                  </p>
                   <Textarea
                     className="flex-1 min-h-[100px] lg:min-h-[140px] resize-y text-sm"
-                    value={bulletsToLines(currentSlide.pptContent)}
-                    onChange={(e) =>
-                      updateSlideAt(currentSlideIndex, { pptContent: linesToBullets(e.target.value) })
-                    }
+                    value={pptDraft}
+                    onChange={(e) => setPptDraft(e.target.value)}
+                    onBlur={() => flushDraftsToSlides(scriptDraft, pptDraft)}
+                    disabled={busy}
                   />
                   </div>
                 </div>
@@ -410,13 +590,13 @@ const PreviewSection = ({
                     </div>
                   </div>
                 </div>
-                <div className="flex items-center justify-center gap-4 mt-3 px-1">
+                <div className="flex flex-wrap items-center justify-center gap-3 mt-3 px-1">
                   <Button
                     type="button"
                     variant="outline"
                     size="icon"
                     className="h-10 w-10 rounded-xl shrink-0"
-                    disabled={currentSlideIndex === 0}
+                    disabled={currentSlideIndex === 0 || busy}
                     onClick={goToPrevSlide}
                     aria-label="上一页"
                   >
@@ -430,11 +610,33 @@ const PreviewSection = ({
                     variant="outline"
                     size="icon"
                     className="h-10 w-10 rounded-xl shrink-0"
-                    disabled={currentSlideIndex >= slides.length - 1}
+                    disabled={currentSlideIndex >= slides.length - 1 || busy}
                     onClick={goToNextSlide}
                     aria-label="下一页"
                   >
                     <ChevronRight className="w-5 h-5" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={busy || projectId == null}
+                    onClick={() => void handleAddPage()}
+                    className="shrink-0"
+                  >
+                    <Plus className="w-4 h-4 mr-1" />
+                    添加页面
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={busy || projectId == null || slides.length <= 1}
+                    onClick={() => void handleDeletePage()}
+                    className="shrink-0 text-red-600 border-red-200 hover:bg-red-50"
+                  >
+                    <Trash2 className="w-4 h-4 mr-1" />
+                    删除页面
                   </Button>
                 </div>
               </div>
