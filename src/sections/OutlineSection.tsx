@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, ArrowLeft, Plus, Trash2, GripVertical, Sparkles, Loader2 } from 'lucide-react';
+import { ArrowRight, Plus, Trash2, GripVertical, Sparkles, Loader2 } from 'lucide-react';
 import { FlowExitNav } from '@/components/FlowExitNav';
+import { WorkflowStepActions } from '@/components/WorkflowStepActions';
 import { Button } from '@/components/ui/button';
+import type { WorkflowProgress, WorkflowStep } from '@/lib/workflowSteps';
 import { Input } from '@/components/ui/input';
 import { reorderSlidesArray } from '@/lib/slideOrder';
 import { persistSlideBullets, persistSlideTitle } from '@/lib/slideStructure';
@@ -12,17 +14,29 @@ import type { OutlineData, SlideData } from '../App';
 interface OutlineSectionProps {
   projectId?: number | null;
   outline: OutlineData;
+  workflowProgress: WorkflowProgress;
+  onGoToStep: (step: WorkflowStep) => void;
+  onSlidesChange: (slides: SlideData[]) => void;
   onConfirm: (slides: SlideData[], reportProgress?: (message: string) => void) => Promise<void>;
-  onBack: () => void;
 }
 
-const OutlineSection = ({ projectId, outline, onConfirm, onBack }: OutlineSectionProps) => {
+const OutlineSection = ({
+  projectId,
+  outline,
+  workflowProgress,
+  onGoToStep,
+  onSlidesChange,
+  onConfirm,
+}: OutlineSectionProps) => {
   const [slides, setSlides] = useState<SlideData[]>(outline.slides);
 
   useEffect(() => {
     setSlides(outline.slides);
   }, [outline]);
 
+  useEffect(() => {
+    onSlidesChange(slides);
+  }, [slides, onSlidesChange]);
   const patchSlide = (index: number, patch: Partial<SlideData>) => {
     setSlides((prev) => {
       const next = [...prev];
@@ -178,30 +192,38 @@ const OutlineSection = ({ projectId, outline, onConfirm, onBack }: OutlineSectio
                 </p>
               )}
             </div>
-            <div className="flex items-center gap-3">
-              <Button variant="outline" onClick={onBack} className="border-gray-200 text-[#1f1f1f]">
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                返回
-              </Button>
-              <Button
-                onClick={handleConfirm}
-                disabled={isLoading}
-                className="bg-[#3898ec] hover:bg-[#0082f3] text-white"
-              >
-                {isLoading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    AI 正在全力工作...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4 mr-2" />
-                    生成内容
-                    <ArrowRight className="w-4 h-4 ml-2" />
-                  </>
-                )}
-              </Button>
-            </div>
+            <WorkflowStepActions
+              currentStep="outline"
+              progress={workflowProgress}
+              onGoToStep={onGoToStep}
+              busy={isLoading}
+              primaryAction={
+                <Button
+                  onClick={() => void handleConfirm()}
+                  disabled={isLoading}
+                  className="bg-[#3898ec] hover:bg-[#0082f3] text-white"
+                >
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      AI 正在全力工作...
+                    </>
+                  ) : workflowProgress.hasContent ? (
+                    <>
+                      <Sparkles className="w-4 h-4 mr-2" />
+                      重新生成内容
+                      <ArrowRight className="w-4 h-4 ml-2" />
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4 mr-2" />
+                      生成内容
+                      <ArrowRight className="w-4 h-4 ml-2" />
+                    </>
+                  )}
+                </Button>
+              }
+            />
           </div>
 
           {statusMessage && (
@@ -384,8 +406,7 @@ const OutlineSection = ({ projectId, outline, onConfirm, onBack }: OutlineSectio
 
           <div className="mt-8 p-4 bg-[#3898ec]/5 rounded-xl">
             <p className="text-sm text-[#3898ec]">
-              提示：可直接编辑每页标题与纲要要点（含手动添加的新页）；拖拽 ≡ 调整顺序。已有后端记录的页失焦时会自动保存；新页在点击「生成内容」时一并同步。
-            </p>
+              提示：可直接编辑每页标题与纲要要点（含手动添加的新页）；拖拽 ≡ 调整顺序。顶部「上一步 / 下一步」可在输入、大纲、内容之间切换。已有后端记录的页失焦时会自动保存；新页在点击「生成内容」时一并同步。            </p>
           </div>
         </div>
       </div>

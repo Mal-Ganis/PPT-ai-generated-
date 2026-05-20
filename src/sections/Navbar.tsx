@@ -1,15 +1,17 @@
 import { useState, useEffect } from 'react';
 import { Menu, X, FileText, RotateCcw, Settings } from 'lucide-react';
 import type { AppStep } from '../App';
+import { canGoToWorkflowStep, type WorkflowProgress, type WorkflowStep } from '@/lib/workflowSteps';
 
 interface NavbarProps {
   currentStep: AppStep;
+  workflowProgress?: WorkflowProgress | null;
   onNavigate: (step: AppStep) => void;
   onReset: () => void;
   onOpenConfig: () => void;
 }
 
-const Navbar = ({ currentStep, onNavigate, onReset, onOpenConfig }: NavbarProps) => {
+const Navbar = ({ currentStep, workflowProgress, onNavigate, onReset, onOpenConfig }: NavbarProps) => {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
@@ -35,10 +37,22 @@ const Navbar = ({ currentStep, onNavigate, onReset, onOpenConfig }: NavbarProps)
     const stepOrder = ['input', 'outline', 'content', 'preview'];
     const currentIndex = stepOrder.indexOf(currentStep);
     const stepIndex = stepOrder.indexOf(stepKey);
-    
+
     if (stepKey === currentStep) return 'active';
     if (stepIndex < currentIndex) return 'completed';
+    if (
+      workflowProgress &&
+      canGoToWorkflowStep(stepKey as WorkflowStep, workflowProgress)
+    ) {
+      return 'reachable';
+    }
     return 'pending';
+  };
+
+  const handleWorkflowStepClick = (stepKey: string) => {
+    const status = getStepStatus(stepKey);
+    if (status === 'pending') return;
+    onNavigate(stepKey as AppStep);
   };
 
   return (
@@ -78,32 +92,42 @@ const Navbar = ({ currentStep, onNavigate, onReset, onOpenConfig }: NavbarProps)
               <div className="hidden md:flex items-center gap-2">
                 {workflowSteps.map((step, index) => {
                   const status = getStepStatus(step.key);
+                  const clickable = status !== 'pending';
                   return (
                     <div key={step.key} className="flex items-center">
-                      <div 
+                      <button
+                        type="button"
+                        disabled={!clickable}
+                        onClick={() => handleWorkflowStepClick(step.key)}
                         className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition-all duration-300 ${
                           status === 'active'
                             ? 'bg-[#3898ec] text-white'
-                            : status === 'completed'
-                            ? 'bg-[#3898ec]/20 text-[#3898ec]'
-                            : 'bg-gray-100 text-gray-400'
+                            : status === 'completed' || status === 'reachable'
+                              ? 'bg-[#3898ec]/20 text-[#3898ec] hover:bg-[#3898ec]/30 cursor-pointer'
+                              : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                         }`}
                       >
-                        <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs ${
-                          status === 'active'
-                            ? 'bg-white text-[#3898ec]'
-                            : status === 'completed'
-                            ? 'bg-[#3898ec] text-white'
-                            : 'bg-gray-300 text-white'
-                        }`}>
+                        <span
+                          className={`w-5 h-5 rounded-full flex items-center justify-center text-xs ${
+                            status === 'active'
+                              ? 'bg-white text-[#3898ec]'
+                              : status === 'completed' || status === 'reachable'
+                                ? 'bg-[#3898ec] text-white'
+                                : 'bg-gray-300 text-white'
+                          }`}
+                        >
                           {status === 'completed' ? '✓' : step.number}
                         </span>
                         <span>{step.label}</span>
-                      </div>
+                      </button>
                       {index < workflowSteps.length - 1 && (
-                        <div className={`w-8 h-0.5 mx-1 ${
-                          status === 'completed' ? 'bg-[#3898ec]' : 'bg-gray-200'
-                        }`} />
+                        <div
+                          className={`w-8 h-0.5 mx-1 ${
+                            status === 'completed' || status === 'active'
+                              ? 'bg-[#3898ec]'
+                              : 'bg-gray-200'
+                          }`}
+                        />
                       )}
                     </div>
                   );
@@ -168,16 +192,16 @@ const Navbar = ({ currentStep, onNavigate, onReset, onOpenConfig }: NavbarProps)
                     key={step.key}
                     onClick={() => {
                       if (status !== 'pending') {
-                        onNavigate(step.key as AppStep);
+                        handleWorkflowStepClick(step.key);
                         setIsMobileMenuOpen(false);
                       }
                     }}
                     className={`block w-full text-left px-4 py-3 rounded-lg transition-colors ${
                       status === 'active'
                         ? 'bg-[#3898ec]/10 text-[#3898ec] font-medium'
-                        : status === 'completed'
-                        ? 'text-[#1f1f1f] hover:bg-gray-50'
-                        : 'text-gray-400 cursor-not-allowed'
+                        : status === 'completed' || status === 'reachable'
+                          ? 'text-[#1f1f1f] hover:bg-gray-50'
+                          : 'text-gray-400 cursor-not-allowed'
                     }`}
                   >
                     {step.number}. {step.label}

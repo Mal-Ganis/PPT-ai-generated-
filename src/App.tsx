@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import './App.css';
 import { Toaster } from '@/components/ui/sonner';
@@ -28,6 +28,18 @@ import {
   type SystemConfig,
 } from './lib/backend';
 import { buildOutlinePayload, mapDetailToSlides } from './lib/slideMappers';
+import {
+  clearMainFlowSession,
+  isWorkflowStep,
+  loadMainFlowSession,
+  saveMainFlowSession,
+  type MainFlowSession,
+} from './lib/mainFlowSession';
+import {
+  canGoToWorkflowStep,
+  getWorkflowProgress,
+  type WorkflowStep,
+} from './lib/workflowSteps';
 
 export type AppStep =
   | 'home'
@@ -79,11 +91,20 @@ function ProjectsPage() {
   return (
     <div className="min-h-screen bg-[#f3f3f3]">
       <ProjectsSection
-        onBack={() => navigate('/')}
+        onBack={() => navigate('/', { replace: true, state: { resumeMainFlow: Date.now() } })}
         onOpenProject={(id) => navigate('/', { state: { openProjectId: id } })}
       />
     </div>
   );
+}
+
+function resolveStepFromProjectDetail(detail: Awaited<ReturnType<typeof fetchProject>>): AppStep {
+  const slides = detail.slides ?? [];
+  const hasPpt = slides.some((s) => (s.pptBullets?.length ?? 0) > 0);
+  const hasContent = slides.some((s) => (s.bullets?.length ?? 0) > 0 || (s.body?.length ?? 0) > 0);
+  if (hasPpt) return 'preview';
+  if (hasContent) return 'content';
+  return 'outline';
 }
 
 export function MainFlow() {
@@ -98,6 +119,7 @@ export function MainFlow() {
   } | null>(null);
   const [outlineData, setOutlineData] = useState<OutlineData | null>(null);
   const [finalSlides, setFinalSlides] = useState<SlideData[] | null>(null);
+  const sessionHydratedRef = useRef(false);
 
   const handleStart = () => {
     setCurrentStep('input');
@@ -232,11 +254,40 @@ export function MainFlow() {
   };
 
   const handleReset = useCallback(() => {
+    sessionHydratedRef.current = false;
+    clearMainFlowSession();
     setCurrentStep('home');
     setProjectId(null);
     setInputData(null);
     setOutlineData(null);
     setFinalSlides(null);
+  }, []);
+
+  const applyMainFlowSession = useCallback((session: MainFlowSession) => {
+    setCurrentStep(session.currentStep);
+    setProjectId(session.projectId);
+    setInputData(session.inputData);
+    setOutlineData(session.outlineData);
+    setFinalSlides(session.finalSlides);
+  }, []);
+
+  const refreshProjectState = useCallback(async (id: number, preferredStep?: AppStep) => {
+    const detail = await fetchProject(id);
+    const mapped = mapDetailToSlides(detail);
+    setProjectId(id);
+    setInputData({ type: 'topic', content: detail.theme });
+    setOutlineData({
+      title: detail.title,
+      presentationDurationMinutes: detail.presentationDurationMinutes,
+      slides: mapped.map((s) => ({
+        ...s,
+        content: s.content.length ? s.content : ['（待编辑要点）'],
+      })),
+    });
+    const hasContent = mapped.some((s) => s.content.length > 0 && s.content[0] !== '（待编辑要点）');
+    setFinalSlides(hasContent ? mapped : null);
+    const step = preferredStep ?? resolveStepFromProjectDetail(detail);
+    setCurrentStep(isWorkflowStep(step) ? step : 'outline');
   }, []);
 
   const handleShowEvaluations = () => {
@@ -251,34 +302,65 @@ export function MainFlow() {
     setCurrentStep('projects');
   };
 
-  const handleOpenProject = useCallback(async (id: number) => {
-    try {
-      const detail = await fetchProject(id);
-      setProjectId(id);
-      setInputData({ type: 'topic', content: detail.theme });
-      setOutlineData({
-        title: detail.title,
-        presentationDurationMinutes: detail.presentationDurationMinutes,
-        slides: mapDetailToSlides(detail).map((s) => ({
-          ...s,
-          content: s.content.length ? s.content : ['（待编辑要点）'],
-        })),
-      });
-      const hasContent = detail.slides.some((s) => (s.bullets?.length ?? 0) > 0 || (s.body?.length ?? 0) > 0);
-      if (hasContent) {
-        setFinalSlides(mapDetailToSlides(detail));
-      } else {
-        setFinalSlides(null);
+  const workflowProgress = getWorkflowProgress({ projectId, outlineData, finalSlides });
+
+  const handleWorkflowNavigate = useCallback(
+    (target: WorkflowStep) => {
+      if (!canGoToWorkflowStep(target, workflowProgress)) {
+        return;
       }
-      setCurrentStep('outline');
-    } catch (e) {
-      console.error(e);
-    }
+      setCurrentStep(target);
+    },
+    [workflowProgress],
+  );
+
+  const handleNavbarNavigate = useCallback(
+    (step: AppStep) => {
+      if (step === 'input' || step === 'outline' || step === 'content' || step === 'preview') {
+        handleWorkflowNavigate(step);
+        return;
+      }
+      setCurrentStep(step);
+    },
+    [handleWorkflowNavigate],
+  );
+
+  const handleOutlineSlidesChange = useCallback((slides: SlideData[]) => {
+    setOutlineData((prev) => (prev ? { ...prev, slides } : null));
   }, []);
+
+  const handleOpenProject = useCallback(
+    async (id: number) => {
+      try {
+        await refreshProjectState(id);
+      } catch (e) {
+        console.error(e);
+      }
+    },
+    [refreshProjectState],
+  );
+
+  useEffect(() => {
+    if (currentStep === 'home' && projectId == null) {
+      clearMainFlowSession();
+      return;
+    }
+    if (!isWorkflowStep(currentStep) && currentStep !== 'projects') {
+      return;
+    }
+    saveMainFlowSession({
+      currentStep,
+      projectId,
+      inputData,
+      outlineData,
+      finalSlides,
+    });
+  }, [currentStep, projectId, inputData, outlineData, finalSlides]);
 
   useEffect(() => {
     const st = (location.state ?? null) as {
       resetMainFlow?: number;
+      resumeMainFlow?: number;
       openProjectId?: number;
     } | null;
 
@@ -288,9 +370,42 @@ export function MainFlow() {
       return;
     }
 
-    const id = st?.openProjectId;
-    if (id == null || !Number.isFinite(id)) return;
+    if (st?.resumeMainFlow != null) {
+      sessionHydratedRef.current = true;
+      const session = loadMainFlowSession();
+      let cancelled = false;
+      void (async () => {
+        if (session?.projectId) {
+          try {
+            await refreshProjectState(session.projectId, session.currentStep);
+          } catch {
+            applyMainFlowSession(session);
+          }
+        } else if (session) {
+          applyMainFlowSession(session);
+        }
+        if (!cancelled) {
+          navigate(location.pathname, { replace: true, state: {} });
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }
 
+    const id = st?.openProjectId;
+    if (id == null || !Number.isFinite(id)) {
+      if (!sessionHydratedRef.current && location.pathname === '/') {
+        const session = loadMainFlowSession();
+        if (session?.projectId && isWorkflowStep(session.currentStep)) {
+          sessionHydratedRef.current = true;
+          void refreshProjectState(session.projectId, session.currentStep);
+        }
+      }
+      return;
+    }
+
+    sessionHydratedRef.current = true;
     let cancelled = false;
     void (async () => {
       await handleOpenProject(id);
@@ -301,13 +416,22 @@ export function MainFlow() {
     return () => {
       cancelled = true;
     };
-  }, [location.state, location.pathname, handleOpenProject, handleReset, navigate]);
+  }, [
+    location.state,
+    location.pathname,
+    handleOpenProject,
+    handleReset,
+    navigate,
+    applyMainFlowSession,
+    refreshProjectState,
+  ]);
 
   return (
     <div className="min-h-screen bg-[#f3f3f3]">
       <Navbar
         currentStep={currentStep}
-        onNavigate={setCurrentStep}
+        workflowProgress={workflowProgress}
+        onNavigate={handleNavbarNavigate}
         onReset={handleReset}
         onOpenConfig={handleShowConfig}
       />
@@ -321,15 +445,26 @@ export function MainFlow() {
         />
       )}
 
-      {currentStep === 'input' && <InputSection onSubmit={handleInputSubmit} />}
+      {currentStep === 'input' && (
+        <InputSection
+          onSubmit={handleInputSubmit}
+          workflowProgress={workflowProgress}
+          onGoToStep={handleWorkflowNavigate}
+          initialTopic={inputData?.type === 'topic' ? inputData.content : undefined}
+          initialInputType={inputData?.type}
+          initialPresentationMinutes={inputData?.presentationDurationMinutes}
+        />
+      )}
 
       {currentStep === 'outline' && outlineData && (
         <OutlineSection
           key={projectId ?? 'new'}
           projectId={projectId}
           outline={outlineData}
+          workflowProgress={workflowProgress}
+          onGoToStep={handleWorkflowNavigate}
+          onSlidesChange={handleOutlineSlidesChange}
           onConfirm={handleOutlineConfirm}
-          onBack={() => setCurrentStep('input')}
         />
       )}
 
@@ -341,9 +476,10 @@ export function MainFlow() {
           deckTheme={inputData?.content ?? outlineData?.title ?? ''}
           inputType={inputData?.type ?? 'topic'}
           inputContent={inputData?.content ?? ''}
+          workflowProgress={workflowProgress}
+          onGoToStep={handleWorkflowNavigate}
           onSlidesChange={setFinalSlides}
           onConfirm={handleContentConfirm}
-          onBack={() => setCurrentStep('outline')}
         />
       )}
 
@@ -355,9 +491,10 @@ export function MainFlow() {
           deckTheme={inputData?.content ?? outlineData?.title ?? ''}
           inputType={inputData?.type ?? 'topic'}
           inputContent={inputData?.content ?? ''}
+          workflowProgress={workflowProgress}
+          onGoToStep={handleWorkflowNavigate}
           onSlidesChange={setFinalSlides}
           onReset={handleReset}
-          onBack={() => setCurrentStep('content')}
         />
       )}
 
