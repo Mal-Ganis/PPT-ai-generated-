@@ -13,6 +13,8 @@ import {
 } from 'lucide-react';
 import { SlideTitleSortList } from '@/components/SlideTitleSortList';
 import { FlowExitNav } from '@/components/FlowExitNav';
+import { WorkflowStepActions } from '@/components/WorkflowStepActions';
+import type { WorkflowProgress, WorkflowStep } from '@/lib/workflowSteps';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -41,8 +43,9 @@ interface PreviewSectionProps {
   inputType: 'topic' | 'document';
   inputContent: string;
   onSlidesChange: (slides: SlideData[]) => void;
+  workflowProgress: WorkflowProgress;
+  onGoToStep: (step: WorkflowStep) => void;
   onReset: () => void;
-  onBack: () => void;
 }
 
 function bulletsEqual(a: string[], b: string[]): boolean {
@@ -69,8 +72,9 @@ const PreviewSection = ({
   inputType,
   inputContent,
   onSlidesChange,
+  workflowProgress,
+  onGoToStep,
   onReset,
-  onBack,
 }: PreviewSectionProps) => {
   const [slides, setSlides] = useState<SlideData[]>(initialSlides);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
@@ -421,11 +425,14 @@ const PreviewSection = ({
                 </p>
               )}
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button variant="outline" onClick={onBack}>
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                返回编辑
-              </Button>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full lg:w-auto">
+              <WorkflowStepActions
+                currentStep="preview"
+                progress={workflowProgress}
+                onGoToStep={onGoToStep}
+                busy={isExtracting || isStructuring}
+              />
+              <div className="flex flex-wrap items-center gap-2">
               <Button
                 variant="outline"
                 disabled={isExtracting || projectId == null}
@@ -451,6 +458,7 @@ const PreviewSection = ({
                 <RotateCcw className="w-4 h-4 mr-2" />
                 重新开始
               </Button>
+              </div>
             </div>
           </div>
 

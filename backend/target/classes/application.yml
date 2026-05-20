@@ -28,10 +28,10 @@ server:
 # DEEPSEEK_API_KEY：大纲与幻灯片生成（必填）
 # TAVILY_API_KEY / SILICONFLOW_API_KEY：检索与语义事实率（可选，未配则降级）
 deepseek:
-  api-key: ${DEEPSEEK_API_KEY:}
+  api-key: ${DEEPSEEK_API_KEY:sk-846487c4b0854f4cbb0c9c314fa1c0c2}
 
 tavily:
-  api-key: ${TAVILY_API_KEY:}
+  api-key: ${TAVILY_API_KEY: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}
   # basic | advanced | fast | ultra-fast — advanced 召回更稳，适合中文主题验收
   search-depth: ${TAVILY_SEARCH_DEPTH:advanced}
   max-results: ${TAVILY_MAX_RESULTS:10}
@@ -40,7 +40,7 @@ tavily:
   wikipedia-mode: ${TAVILY_WIKIPEDIA_MODE:supplement}
 
 siliconflow:
-  api-key: ${SILICONFLOW_API_KEY:}
+  api-key: ${SILICONFLOW_API_KEY:sk-agakamengqvkkveoxffueumfbdjvtbkdfidztxnhblchpzzt}
 
 # 大纲：权威检索接入主流程（无 Tavily Key 时维基兜底仍可能命中）
 outline:

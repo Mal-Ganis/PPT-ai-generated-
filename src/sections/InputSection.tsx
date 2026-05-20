@@ -1,10 +1,12 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Type, FileUp, ArrowRight, Sparkles, Loader2, X, FileText, Clock } from 'lucide-react';
 import {
   PRESENTATION_DURATION_OPTIONS,
   DEFAULT_PRESENTATION_DURATION_MINUTES,
 } from '@/lib/backend';
 import { FlowExitNav } from '@/components/FlowExitNav';
+import { WorkflowStepActions } from '@/components/WorkflowStepActions';
+import type { WorkflowProgress, WorkflowStep } from '@/lib/workflowSteps';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import * as mammoth from 'mammoth';
@@ -15,9 +17,21 @@ interface InputSectionProps {
     content: string,
     meta?: { fileName?: string; formData?: FormData; presentationDurationMinutes?: number },
   ) => Promise<void>;
+  workflowProgress: WorkflowProgress;
+  onGoToStep: (step: WorkflowStep) => void;
+  initialTopic?: string;
+  initialInputType?: 'topic' | 'document';
+  initialPresentationMinutes?: number;
 }
 
-const InputSection = ({ onSubmit }: InputSectionProps) => {
+const InputSection = ({
+  onSubmit,
+  workflowProgress,
+  onGoToStep,
+  initialTopic,
+  initialInputType,
+  initialPresentationMinutes,
+}: InputSectionProps) => {
   const [inputType, setInputType] = useState<'topic' | 'document'>('topic');
   const [topic, setTopic] = useState('');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
@@ -28,6 +42,12 @@ const InputSection = ({ onSubmit }: InputSectionProps) => {
     DEFAULT_PRESENTATION_DURATION_MINUTES,
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (initialTopic != null) setTopic(initialTopic);
+    if (initialInputType) setInputType(initialInputType);
+    if (initialPresentationMinutes != null) setPresentationMinutes(initialPresentationMinutes);
+  }, [initialTopic, initialInputType, initialPresentationMinutes]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -96,6 +116,16 @@ const InputSection = ({ onSubmit }: InputSectionProps) => {
       <div className="section-container">
         <div className="section-inner max-w-4xl">
           <FlowExitNav className="mb-6" />
+          {workflowProgress.hasOutline && (
+            <div className="mb-6 flex justify-center">
+              <WorkflowStepActions
+                currentStep="input"
+                progress={workflowProgress}
+                onGoToStep={onGoToStep}
+                busy={isLoading}
+              />
+            </div>
+          )}
           {/* Header */}
           <div className="text-center mb-10">
             <h1 className="text-3xl sm:text-4xl font-bold text-[#1f1f1f] mb-3">

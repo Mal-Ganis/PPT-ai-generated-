@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { ArrowRight, ArrowLeft, Loader2, Edit2, RefreshCw, Plus, Trash2 } from 'lucide-react';
 import { SlideTitleSortList } from '@/components/SlideTitleSortList';
 import { FlowExitNav } from '@/components/FlowExitNav';
+import { WorkflowStepActions } from '@/components/WorkflowStepActions';
+import type { WorkflowProgress, WorkflowStep } from '@/lib/workflowSteps';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -24,8 +26,9 @@ interface ContentSectionProps {
   inputType: 'topic' | 'document';
   inputContent: string;
   onSlidesChange?: (slides: SlideData[]) => void;
+  workflowProgress: WorkflowProgress;
+  onGoToStep: (step: WorkflowStep) => void;
   onConfirm: (slides: SlideData[], reportProgress?: (message: string) => void) => Promise<void>;
-  onBack: () => void;
 }
 
 const ContentSection = ({
@@ -36,8 +39,9 @@ const ContentSection = ({
   inputType,
   inputContent,
   onSlidesChange,
+  workflowProgress,
+  onGoToStep,
   onConfirm,
-  onBack,
 }: ContentSectionProps) => {
   const [slides, setSlides] = useState<SlideData[]>(initialSlides);
 
@@ -260,29 +264,31 @@ const ContentSection = ({
                 项目 ID {projectId} · 第 {currentSlideIndex + 1} / {slides.length} 页
               </p>
             </div>
-            <div className="flex items-center gap-3 flex-wrap">
-              <Button variant="outline" onClick={onBack} disabled={busy} className="border-gray-200 text-[#1f1f1f]">
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                返回
-              </Button>
-              <Button
-                onClick={handleConfirm}
-                disabled={busy}
-                className="bg-[#3898ec] hover:bg-[#0082f3] text-white disabled:opacity-60"
-              >
-                {isLoading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    正在保存...
-                  </>
-                ) : (
-                  <>
-                    完成编辑
-                    <ArrowRight className="w-4 h-4 ml-2" />
-                  </>
-                )}
-              </Button>
-            </div>
+            <WorkflowStepActions
+              currentStep="content"
+              progress={workflowProgress}
+              onGoToStep={onGoToStep}
+              busy={busy}
+              primaryAction={
+                <Button
+                  onClick={() => void handleConfirm()}
+                  disabled={busy}
+                  className="bg-[#3898ec] hover:bg-[#0082f3] text-white disabled:opacity-60"
+                >
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      正在保存...
+                    </>
+                  ) : (
+                    <>
+                      完成编辑
+                      <ArrowRight className="w-4 h-4 ml-2" />
+                    </>
+                  )}
+                </Button>
+              }
+            />
           </div>
 
           {statusMessage && (
