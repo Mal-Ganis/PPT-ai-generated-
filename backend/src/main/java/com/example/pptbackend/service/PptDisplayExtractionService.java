@@ -124,10 +124,8 @@ public class PptDisplayExtractionService {
         }
 
         if (StructuralSlideDetector.isStructuralSlide(slide.getTitle(), slide.getChapter())) {
-            return script.stream()
-                .filter(s -> s != null && !s.isBlank())
-                .map(String::trim)
-                .collect(Collectors.toCollection(ArrayList::new));
+            return StructuralSlideDetector.pptBulletsForStructural(
+                slide.getTitle(), slide.getChapter(), script);
         }
 
         String title = slide.getTitle() != null ? slide.getTitle() : "";
@@ -150,7 +148,7 @@ public class PptDisplayExtractionService {
             ## 改写规则（必须遵守）
             1. 删除口头衔接与语气词：如「然而」「因此」「综上」「承接上一页」「接下来」「其次」等；不要写「本页将介绍」。
             2. 每条为**短语或极短句**（建议 8–28 字），保留关键数字、机构名、结论词；禁止长段落。
-            3. 条数：骨架页（封面/目录/问答）2–6 条；正文页 2–5 条，不得超过讲稿条数。
+            3. 条数：正文页 2–5 条，不得超过讲稿条数。问答页若出现，勿把高频问题、互动收尾等长句放上屏（由系统处理为仅标题）。
             4. 禁止编造讲稿中没有的事实；可合并重复信息。
             5. 只输出合法 JSON：{"ppt_bullets":["…","…"]}
             """.formatted(

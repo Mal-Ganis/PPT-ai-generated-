@@ -33,6 +33,7 @@ public class SystemConfigService {
         config.setRetrievalLimit(dto.getRetrievalLimit());
         config.setOutlinePromptTemplate(dto.getOutlinePromptTemplate());
         config.setSlidePromptTemplate(dto.getSlidePromptTemplate());
+        config.setOutlineIncludeQaSlide(dto.getOutlineIncludeQaSlide() != null ? dto.getOutlineIncludeQaSlide() : true);
 
         return toDto(systemConfigRepository.save(config));
     }
@@ -48,6 +49,7 @@ public class SystemConfigService {
         dto.setRetrievalLimit(config.getRetrievalLimit());
         dto.setOutlinePromptTemplate(config.getOutlinePromptTemplate());
         dto.setSlidePromptTemplate(config.getSlidePromptTemplate());
+        dto.setOutlineIncludeQaSlide(config.getOutlineIncludeQaSlide() != null ? config.getOutlineIncludeQaSlide() : true);
         return dto;
     }
 
@@ -75,6 +77,7 @@ public class SystemConfigService {
         config.setTopP(0.95);
         config.setTopK(1);
         config.setRetrievalLimit(3);
+        config.setOutlineIncludeQaSlide(true);
         config.setOutlinePromptTemplate("""
 你是一位专业的商业叙事顾问。请基于下列输入生成逻辑严谨、数据驱动的 PPT 大纲。**大纲只负责「叙事骨架」**：章节名、页标题、每条要点写什么维度；不写幻灯片正文血肉细节——血肉留给下一阶段模板生成。
 
@@ -125,8 +128,8 @@ public class SystemConfigService {
 }
 
 ## 叙事结构强制要求
-0. **封面与目录（强制）**：使用 chapters 或扁平 slides 时，**全稿顺序的第一条必须是标题含「封面」的页**，**第二条必须是标题含「目录」的页**；目录页 content 用 4–10 条短语列出后续各主要页面/章节标题；从第三条目起再进入背景、问题、分析等正文叙事。
-1. 整体弧线：钩子/冲突 → 背景数据 → 核心分析（2–3 章，递进而非并列堆砌）→ 案例或量化证据 → 风险/边界 → 结论与行动呼吁 →（按需）Q&A。
+0. **封面与目录（强制且唯一）**：第 1 页封面：`title`=演示主标题（=JSON title），`chapter`=`封面`，content 仅副标题/汇报信息。第 2 页目录：`title`=`目录`，`chapter`=`目录`，content 列出 **4–10 个章节名**（不是正文页 title）。第 3 页起正文：`title`=页主题，`chapter`=目录中的章节名之一。**禁止**第二页目录。
+1. 整体弧线：钩子/冲突 → 背景数据 → 核心分析（2–3 章，递进而非并列堆砌）→ 案例或量化证据 → 风险/边界 → 结论与行动呼吁 → **Q&A 与讨论（强制，见文末系统约束）**。
 2. 章节之间须有因果关系或递进关系；禁止简单并列「优势 1、2、3」式堆叠。
 3. 每章的首页 title 应体现该章「叙事功能」（例如「为何必须现在行动？」）。
 4. 页数：简单主题 ≥6 页；复杂主题 10–14 页。

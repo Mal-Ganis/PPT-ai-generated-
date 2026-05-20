@@ -43,6 +43,10 @@ public class SystemConfig {
     @Column(name = "slide_prompt_template", columnDefinition = "TEXT")
     private String slidePromptTemplate;
 
+    /** 为 true 时每份大纲须含 Q&A/问答页（模型未生成时后端自动补页） */
+    @Column(name = "outline_include_qa_slide")
+    private Boolean outlineIncludeQaSlide = true;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -119,6 +123,14 @@ public class SystemConfig {
 
     public void setSlidePromptTemplate(String slidePromptTemplate) {
         this.slidePromptTemplate = slidePromptTemplate;
+    }
+
+    public Boolean getOutlineIncludeQaSlide() {
+        return outlineIncludeQaSlide;
+    }
+
+    public void setOutlineIncludeQaSlide(Boolean outlineIncludeQaSlide) {
+        this.outlineIncludeQaSlide = outlineIncludeQaSlide;
     }
 
     public OffsetDateTime getCreatedAt() {

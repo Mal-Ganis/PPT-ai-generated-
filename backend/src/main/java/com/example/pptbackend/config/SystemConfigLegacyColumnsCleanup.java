@@ -7,8 +7,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 /**
- * 早期 Hibernate 命名曾生成误列 {@code topp}/{@code topk}，与 {@code top_p}/{@code top_k} 并存且 NOT NULL，
- * 导致插入默认配置失败。启动时删除遗留列（若不存在则跳过）。
+ * 启动时修补 {@code system_config} 表结构：删除 Hibernate 误列，补全新配置列。
  */
 @Component
 @Order(0)
@@ -24,5 +23,9 @@ public class SystemConfigLegacyColumnsCleanup implements ApplicationRunner {
     public void run(ApplicationArguments args) {
         jdbcTemplate.execute("ALTER TABLE system_config DROP COLUMN IF EXISTS topp");
         jdbcTemplate.execute("ALTER TABLE system_config DROP COLUMN IF EXISTS topk");
+        jdbcTemplate.execute(
+            "ALTER TABLE system_config ADD COLUMN IF NOT EXISTS outline_include_qa_slide boolean DEFAULT true");
+        jdbcTemplate.update(
+            "UPDATE system_config SET outline_include_qa_slide = true WHERE outline_include_qa_slide IS NULL");
     }
 }

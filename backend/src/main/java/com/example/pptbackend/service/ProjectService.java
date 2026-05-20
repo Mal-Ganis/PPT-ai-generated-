@@ -167,17 +167,17 @@ public class ProjectService {
             slide.setNotes(request.getNotes().isBlank() ? null : request.getNotes());
         }
         if (request.getBullets() != null) {
-            slide.setBullets(new ArrayList<>(request.getBullets()));
+            slide.setBullets(request.getBullets());
             slide.setBody(null);
         } else if (request.getBody() != null) {
             String b = request.getBody().trim();
             slide.setBody(b.isEmpty() ? null : request.getBody());
         }
         if (request.getPptBullets() != null) {
-            slide.setPptBullets(new ArrayList<>(request.getPptBullets()));
+            slide.setPptBullets(request.getPptBullets());
         }
         if (request.getSources() != null) {
-            slide.setSources(new ArrayList<>(request.getSources()));
+            slide.setSources(request.getSources());
         }
 
         slideRepository.save(slide);

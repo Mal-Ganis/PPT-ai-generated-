@@ -48,6 +48,8 @@ outline:
   external-snippet-max-chars: ${OUTLINE_EXTERNAL_SNIPPET_MAX_CHARS:4800}
   external-result-limit: ${OUTLINE_EXTERNAL_RESULT_LIMIT:6}
   max-tokens: ${OUTLINE_MAX_TOKENS:4096}
+  # 为 true 时每份大纲须含 Q&A 页（与系统配置 outlineIncludeQaSlide 一致，库中未配置时用此项）
+  include-qa-slide: ${OUTLINE_INCLUDE_QA_SLIDE:true}
 
 # 正文生成：token 与 ILF-2 为空时的 Tavily 兜底
 generation:

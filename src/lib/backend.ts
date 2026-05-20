@@ -89,6 +89,8 @@ export interface SystemConfig {
   retrievalLimit: number;
   outlinePromptTemplate: string;
   slidePromptTemplate: string;
+  /** 为 true 时每份大纲强制包含 Q&A 页 */
+  outlineIncludeQaSlide: boolean;
 }
 
 export interface ExternalSourceDocument {

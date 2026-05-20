@@ -11,6 +11,8 @@ public class SystemConfigDto {
     private Integer retrievalLimit;
     private String outlinePromptTemplate;
     private String slidePromptTemplate;
+    /** 是否强制每份大纲包含 Q&A/问答页（默认 true） */
+    private Boolean outlineIncludeQaSlide;
 
     public Long getId() {
         return id;
@@ -82,5 +84,13 @@ public class SystemConfigDto {
 
     public void setSlidePromptTemplate(String slidePromptTemplate) {
         this.slidePromptTemplate = slidePromptTemplate;
+    }
+
+    public Boolean getOutlineIncludeQaSlide() {
+        return outlineIncludeQaSlide;
+    }
+
+    public void setOutlineIncludeQaSlide(Boolean outlineIncludeQaSlide) {
+        this.outlineIncludeQaSlide = outlineIncludeQaSlide;
     }
 }

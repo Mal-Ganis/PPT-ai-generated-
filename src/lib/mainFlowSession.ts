@@ -55,3 +55,12 @@ export function clearMainFlowSession(): void {
     // ignore
   }
 }
+
+/** 子路由（如单页高级编辑）点「返回流程」时，路由 state 会带 resumeMainFlow 时间戳 */
+export function getResumeSessionFromLocationState(
+  state: unknown,
+): MainFlowSession | null {
+  const st = (state ?? null) as { resumeMainFlow?: number } | null;
+  if (st?.resumeMainFlow == null) return null;
+  return loadMainFlowSession();
+}

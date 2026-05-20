@@ -371,7 +371,8 @@ public class SlideGenerationService {
             }
         }
         slide.setBullets(bullets);
-        slide.setPptBullets(new ArrayList<>(bullets));
+        slide.setPptBullets(StructuralSlideDetector.pptBulletsForStructural(
+            slide.getTitle(), slide.getChapter(), bullets));
         slide.setNotes(null);
         slide.setSources(new ArrayList<>());
         slideRepository.save(slide);
@@ -385,21 +386,22 @@ public class SlideGenerationService {
 
     private static List<String> defaultStructuralBullets(Slide slide) {
         String title = slide.getTitle() != null ? slide.getTitle().trim() : "";
-        if (StructuralSlideDetector.isCover(title)) {
+        String chapter = slide.getChapter();
+        if (StructuralSlideDetector.isCover(title, chapter)) {
             return new ArrayList<>(List.of(
-                "主标题：（请在内容编辑中填写）",
                 "副标题：（可选）",
                 "汇报信息：单位 / 姓名 / 日期"));
         }
-        if (StructuralSlideDetector.isTableOfContents(title)) {
+        if (StructuralSlideDetector.isTableOfContents(title, chapter)) {
             return new ArrayList<>(List.of(
-                "1）请在大纲中维护各章/各页标题",
-                "2）目录页仅列出路线图，正文页再展开细节"));
+                "1）请在大纲中维护各章名称",
+                "2）目录页仅列出章节路线，正文页再展开细节"));
         }
-        if (StructuralSlideDetector.isQaOrDiscussion(title, slide.getChapter())) {
+        if (StructuralSlideDetector.isQaOrDiscussion(title, chapter)) {
             return new ArrayList<>(List.of(
-                "欢迎提问与交流",
-                "可提前准备 2–3 个常见问题及简要回答要点"));
+                "预留 3–5 分钟回答听众提问",
+                "可提前准备 2 个高频问题及口头回应要点",
+                "互动收尾与后续资料说明（讲稿用，不逐条打在幻灯片上）"));
         }
         return new ArrayList<>(List.of("（骨架页：请在大纲或本页编辑中补充简短要点）"));
     }

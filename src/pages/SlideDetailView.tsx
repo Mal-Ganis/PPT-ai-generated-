@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, Loader2, Save } from 'lucide-react';
 import { FlowExitNav } from '@/components/FlowExitNav';
 import { Button } from '@/components/ui/button';
@@ -93,9 +93,7 @@ export default function SlideDetailView() {
     return (
       <div className="min-h-screen pt-24 px-6">
         <p className="text-[#1f1f1f] mb-4">未找到该幻灯片。</p>
-        <Link to="/" state={{ resumeMainFlow: Date.now() }} className="text-[#3898ec] underline">
-          返回流程
-        </Link>
+        <FlowExitNav />
       </div>
     );
   }
@@ -106,11 +104,6 @@ export default function SlideDetailView() {
         <div className="section-inner max-w-3xl">
           <div className="flex flex-wrap items-center gap-2 gap-y-3 mb-8">
             <FlowExitNav />
-            <Button variant="secondary" className="h-9 border border-gray-200 bg-white shadow-sm" asChild>
-              <Link to="/" state={{ resumeMainFlow: Date.now() }}>
-                返回流程
-              </Link>
-            </Button>
             <span className="text-sm text-[#1f1f1f]/60 w-full sm:w-auto sm:ml-auto">
               项目 ID {detail.id} · {detail.title}
             </span>

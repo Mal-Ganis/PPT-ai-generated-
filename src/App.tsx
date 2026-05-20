@@ -31,6 +31,7 @@ import { buildOutlinePayload, mapDetailToSlides } from './lib/slideMappers';
 import {
   clearMainFlowSession,
   isWorkflowStep,
+  getResumeSessionFromLocationState,
   loadMainFlowSession,
   saveMainFlowSession,
   type MainFlowSession,
@@ -110,16 +111,32 @@ function resolveStepFromProjectDetail(detail: Awaited<ReturnType<typeof fetchPro
 export function MainFlow() {
   const location = useLocation();
   const navigate = useNavigate();
-  const [currentStep, setCurrentStep] = useState<AppStep>('home');
-  const [projectId, setProjectId] = useState<number | null>(null);
+  const resumeSessionOnMount = getResumeSessionFromLocationState(location.state);
+  const [currentStep, setCurrentStep] = useState<AppStep>(() =>
+    resumeSessionOnMount && isWorkflowStep(resumeSessionOnMount.currentStep)
+      ? resumeSessionOnMount.currentStep
+      : 'home',
+  );
+  const [projectId, setProjectId] = useState<number | null>(
+    () => resumeSessionOnMount?.projectId ?? null,
+  );
   const [inputData, setInputData] = useState<{
     type: 'topic' | 'document';
     content: string;
     presentationDurationMinutes?: number;
-  } | null>(null);
-  const [outlineData, setOutlineData] = useState<OutlineData | null>(null);
-  const [finalSlides, setFinalSlides] = useState<SlideData[] | null>(null);
-  const sessionHydratedRef = useRef(false);
+  } | null>(() => resumeSessionOnMount?.inputData ?? null);
+  const [outlineData, setOutlineData] = useState<OutlineData | null>(
+    () => resumeSessionOnMount?.outlineData ?? null,
+  );
+  const [outlineRevision, setOutlineRevision] = useState(0);
+  const [finalSlides, setFinalSlides] = useState<SlideData[] | null>(
+    () => resumeSessionOnMount?.finalSlides ?? null,
+  );
+  const sessionHydratedRef = useRef(resumeSessionOnMount != null);
+
+  const bumpOutlineRevision = useCallback(() => {
+    setOutlineRevision((r) => r + 1);
+  }, []);
 
   const handleStart = () => {
     setCurrentStep('input');
@@ -154,8 +171,10 @@ export function MainFlow() {
         setOutlineData(mapOutlineResponse(result));
       }
       setCurrentStep('outline');
+      bumpOutlineRevision();
     } catch (error) {
       console.error('Error generating outline:', error);
+      // 具体文案由 backendApi 拦截器 toast；此处避免静默失败
     }
   };
 
@@ -261,6 +280,7 @@ export function MainFlow() {
     setInputData(null);
     setOutlineData(null);
     setFinalSlides(null);
+    setOutlineRevision(0);
   }, []);
 
   const applyMainFlowSession = useCallback((session: MainFlowSession) => {
@@ -269,6 +289,9 @@ export function MainFlow() {
     setInputData(session.inputData);
     setOutlineData(session.outlineData);
     setFinalSlides(session.finalSlides);
+    if (session.outlineData) {
+      setOutlineRevision((r) => r + 1);
+    }
   }, []);
 
   const refreshProjectState = useCallback(async (id: number, preferredStep?: AppStep) => {
@@ -288,7 +311,8 @@ export function MainFlow() {
     setFinalSlides(hasContent ? mapped : null);
     const step = preferredStep ?? resolveStepFromProjectDetail(detail);
     setCurrentStep(isWorkflowStep(step) ? step : 'outline');
-  }, []);
+    bumpOutlineRevision();
+  }, [bumpOutlineRevision]);
 
   const handleShowEvaluations = () => {
     setCurrentStep('evaluation');
@@ -340,22 +364,34 @@ export function MainFlow() {
     [refreshProjectState],
   );
 
+  const persistMainFlowSession = useCallback(
+    (outlineSlidesOverride?: SlideData[]) => {
+      if (currentStep === 'home' && projectId == null) {
+        clearMainFlowSession();
+        return;
+      }
+      if (!isWorkflowStep(currentStep) && currentStep !== 'projects') {
+        return;
+      }
+      const outlineToSave =
+        outlineSlidesOverride && outlineData
+          ? { ...outlineData, slides: outlineSlidesOverride }
+          : outlineData;
+      saveMainFlowSession({
+        currentStep,
+        projectId,
+        inputData,
+        outlineData: outlineToSave,
+        finalSlides,
+      });
+    },
+    [currentStep, projectId, inputData, outlineData, finalSlides],
+  );
+
   useEffect(() => {
-    if (currentStep === 'home' && projectId == null) {
-      clearMainFlowSession();
-      return;
-    }
-    if (!isWorkflowStep(currentStep) && currentStep !== 'projects') {
-      return;
-    }
-    saveMainFlowSession({
-      currentStep,
-      projectId,
-      inputData,
-      outlineData,
-      finalSlides,
-    });
-  }, [currentStep, projectId, inputData, outlineData, finalSlides]);
+    persistMainFlowSession();
+    return () => persistMainFlowSession();
+  }, [persistMainFlowSession]);
 
   useEffect(() => {
     const st = (location.state ?? null) as {
@@ -461,10 +497,12 @@ export function MainFlow() {
           key={projectId ?? 'new'}
           projectId={projectId}
           outline={outlineData}
+          outlineRevision={outlineRevision}
           workflowProgress={workflowProgress}
           onGoToStep={handleWorkflowNavigate}
           onSlidesChange={handleOutlineSlidesChange}
           onConfirm={handleOutlineConfirm}
+          onPersistFlowSession={persistMainFlowSession}
         />
       )}
 

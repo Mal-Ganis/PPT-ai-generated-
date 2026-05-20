@@ -10,11 +10,14 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.OrderColumn;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @Entity
 @Table(name = "slides")
@@ -40,17 +43,20 @@ public class Slide {
     private String body;
 
     @ElementCollection(fetch = FetchType.EAGER)
+    @OrderColumn(name = "bullet_order")
     @CollectionTable(name = "slide_bullets", joinColumns = @JoinColumn(name = "slide_id"))
     @Column(name = "bullet", columnDefinition = "TEXT")
     private List<String> bullets = new ArrayList<>();
 
     /** 适合投影的短要点（由讲稿 bullets 提炼，供预览中间栏展示） */
     @ElementCollection(fetch = FetchType.EAGER)
+    @OrderColumn(name = "ppt_bullet_order")
     @CollectionTable(name = "slide_ppt_bullets", joinColumns = @JoinColumn(name = "slide_id"))
     @Column(name = "ppt_bullet", columnDefinition = "TEXT")
     private List<String> pptBullets = new ArrayList<>();
 
     @ElementCollection(fetch = FetchType.EAGER)
+    @OrderColumn(name = "source_order")
     @CollectionTable(name = "slide_sources", joinColumns = @JoinColumn(name = "slide_id"))
     @Column(name = "source", columnDefinition = "TEXT")
     private List<String> sources = new ArrayList<>();
@@ -134,7 +140,7 @@ public class Slide {
     }
 
     public void setBullets(List<String> bullets) {
-        this.bullets = bullets != null ? new ArrayList<>(bullets) : new ArrayList<>();
+        replaceStringCollection(this.bullets, bullets);
     }
 
     public List<String> getPptBullets() {
@@ -142,7 +148,7 @@ public class Slide {
     }
 
     public void setPptBullets(List<String> pptBullets) {
-        this.pptBullets = pptBullets != null ? new ArrayList<>(pptBullets) : new ArrayList<>();
+        replaceStringCollection(this.pptBullets, pptBullets);
     }
 
     public List<String> getSources() {
@@ -150,7 +156,33 @@ public class Slide {
     }
 
     public void setSources(List<String> sources) {
-        this.sources = sources != null ? new ArrayList<>(sources) : new ArrayList<>();
+        replaceStringCollection(this.sources, sources);
+    }
+
+    /**
+     * slide_bullets / slide_ppt_bullets / slide_sources 主键含文本列，须就地 clear 再写入，
+     * 且同一页不能有完全相同的字符串（否则会违反唯一约束）。
+     */
+    private static void replaceStringCollection(List<String> target, List<String> incoming) {
+        target.clear();
+        if (incoming == null || incoming.isEmpty()) {
+            return;
+        }
+        List<String> normalized = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (String raw : incoming) {
+            if (raw == null) {
+                continue;
+            }
+            String trimmed = raw.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            if (seen.add(trimmed)) {
+                normalized.add(trimmed);
+            }
+        }
+        target.addAll(normalized);
     }
 
     public String getNotes() {

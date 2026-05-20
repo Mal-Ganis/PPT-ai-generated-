@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Plus, Trash2, GripVertical, Sparkles, Loader2 } from 'lucide-react';
 import { FlowExitNav } from '@/components/FlowExitNav';
@@ -14,31 +14,45 @@ import type { OutlineData, SlideData } from '../App';
 interface OutlineSectionProps {
   projectId?: number | null;
   outline: OutlineData;
+  /** 父级从服务端/会话重载大纲时递增，仅此时才把 outline.slides 同步到本地 */
+  outlineRevision: number;
   workflowProgress: WorkflowProgress;
   onGoToStep: (step: WorkflowStep) => void;
   onSlidesChange: (slides: SlideData[]) => void;
   onConfirm: (slides: SlideData[], reportProgress?: (message: string) => void) => Promise<void>;
+  /** 进入单页高级编辑前写入 session，便于「返回流程」恢复到大纲步骤 */
+  onPersistFlowSession?: (outlineSlides: SlideData[]) => void;
 }
 
 const OutlineSection = ({
   projectId,
   outline,
+  outlineRevision,
   workflowProgress,
   onGoToStep,
   onSlidesChange,
   onConfirm,
+  onPersistFlowSession,
 }: OutlineSectionProps) => {
   const [slides, setSlides] = useState<SlideData[]>(outline.slides);
 
   useEffect(() => {
     setSlides(outline.slides);
-  }, [outline]);
+  }, [outlineRevision, outline.slides]);
 
-  useEffect(() => {
-    onSlidesChange(slides);
-  }, [slides, onSlidesChange]);
+  const applySlides = useCallback(
+    (updater: (prev: SlideData[]) => SlideData[]) => {
+      setSlides((prev) => {
+        const next = updater(prev);
+        onSlidesChange(next);
+        return next;
+      });
+    },
+    [onSlidesChange],
+  );
+
   const patchSlide = (index: number, patch: Partial<SlideData>) => {
-    setSlides((prev) => {
+    applySlides((prev) => {
       const next = [...prev];
       next[index] = { ...next[index], ...patch };
       return next;
@@ -58,12 +72,18 @@ const OutlineSection = ({
   const structureHints = useMemo(() => {
     const titles = slides.map((s) => s.title.toLowerCase());
     const hints: string[] = [];
-    const hasCover = titles.some((t) => /封面|首页|标题|opening/.test(t));
-    const hasToc = titles.some((t) => /目录|纲要|contents/.test(t));
+    const hasCover =
+      slides.some((s) => s.chapter != null && /封面|扉页/i.test(s.chapter)) ||
+      titles.some((t) => /封面|首页|opening/i.test(t));
+    const tocLikeCount = titles.filter((t) => /^(目录|目次)$|contents|agenda/.test(t) || t.includes('目录')).length;
+    const hasToc = tocLikeCount >= 1;
     const hasSummary = titles.some((t) => /总结|致谢|展望|结论|结束/.test(t));
+    const hasQa = titles.some((t) => /问答|答疑|q\s*&\s*a|问题与讨论/i.test(t));
     if (!hasCover) hints.push('建议补充明确标注的封面或标题页');
-    if (!hasToc && slides.length > 4) hints.push('页数较多时建议加入目录页以便导航');
+    if (!hasToc && slides.length > 4) hints.push('页数较多时建议加入目录页（目录条目应为章节名，非各页标题）');
+    if (tocLikeCount > 1) hints.push(`检测到 ${tocLikeCount} 页「目录」类页面，请删除多余目录或重新生成大纲`);
     if (!hasSummary) hints.push('建议加入总结或致谢页以形成闭环');
+    if (!hasQa) hints.push('缺少 Q&A/问答页：保存后重新生成大纲，或在系统配置中确认已开启「大纲统一包含 Q&A 页」');
     if (slides.length < 5) hints.push('演示通常至少包含 5–8 页结构');
     const minutes = outline.presentationDurationMinutes;
     if (minutes != null) {
@@ -90,7 +110,7 @@ const OutlineSection = ({
       content: ['要点1', '要点2'],
       pptContent: [],
     };
-    setSlides((prev) => [...prev, newSlide]);
+    applySlides((prev) => [...prev, newSlide]);
   };
 
   const handleDeleteSlide = (id: number) => {
@@ -98,14 +118,14 @@ const OutlineSection = ({
       alert('至少需要保留一页');
       return;
     }
-    setSlides((prev) => prev.filter((s) => s.id !== id));
+    applySlides((prev) => prev.filter((s) => s.id !== id));
   };
 
   const handleMoveSlide = (index: number, direction: 'up' | 'down') => {
     if (direction === 'up' && index === 0) return;
     if (direction === 'down' && index === slides.length - 1) return;
     const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    setSlides((prev) => reorderSlidesArray(prev, index, targetIndex));
+    applySlides((prev) => reorderSlidesArray(prev, index, targetIndex));
   };
 
   const finishOutlineDrag = () => {
@@ -118,12 +138,12 @@ const OutlineSection = ({
       finishOutlineDrag();
       return;
     }
-    setSlides((prev) => reorderSlidesArray(prev, dragFromIndex, toIndex));
+    applySlides((prev) => reorderSlidesArray(prev, dragFromIndex, toIndex));
     finishOutlineDrag();
   };
 
   const updateBullet = (slideIndex: number, bulletIndex: number, value: string) => {
-    setSlides((prev) => {
+    applySlides((prev) => {
       const next = [...prev];
       const content = [...next[slideIndex].content];
       content[bulletIndex] = value;
@@ -133,7 +153,7 @@ const OutlineSection = ({
   };
 
   const addBullet = (slideIndex: number) => {
-    setSlides((prev) => {
+    applySlides((prev) => {
       const next = [...prev];
       next[slideIndex] = {
         ...next[slideIndex],
@@ -144,7 +164,7 @@ const OutlineSection = ({
   };
 
   const removeBullet = (slideIndex: number, bulletIndex: number) => {
-    setSlides((prev) => {
+    applySlides((prev) => {
       if (prev[slideIndex].content.length <= 1) {
         alert('每页至少保留一条要点');
         return prev;
@@ -159,11 +179,8 @@ const OutlineSection = ({
   };
 
   const handleSlideBlur = (slideIndex: number) => {
-    setSlides((prev) => {
-      const slide = prev[slideIndex];
-      if (slide) void persistSlideIfSaved(slide);
-      return prev;
-    });
+    const slide = slides[slideIndex];
+    if (slide) void persistSlideIfSaved(slide);
   };
 
   const handleConfirm = async () => {
@@ -332,6 +349,7 @@ const OutlineSection = ({
                         <Link
                           to={`/project/${projectId}/slide/${slide.slideId}`}
                           className="text-sm font-medium text-[#3898ec] hover:underline shrink-0 mt-7"
+                          onClick={() => onPersistFlowSession?.(slides)}
                         >
                           高级编辑
                         </Link>

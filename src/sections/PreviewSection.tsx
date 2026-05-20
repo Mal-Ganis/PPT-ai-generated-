@@ -95,14 +95,22 @@ const PreviewSection = ({
 
   currentSlideIndexRef.current = currentSlideIndex;
 
-  const applySlides = useCallback(
-    (next: SlideData[]) => {
-      setSlides(next);
-      slidesRef.current = next;
-      onSlidesChange(next);
-    },
-    [onSlidesChange],
-  );
+  const applySlides = useCallback((next: SlideData[]) => {
+    setSlides(next);
+    slidesRef.current = next;
+  }, []);
+
+  useEffect(() => {
+    setSlides(initialSlides);
+    slidesRef.current = initialSlides;
+    setCurrentSlideIndex((i) =>
+      initialSlides.length === 0 ? 0 : Math.min(i, initialSlides.length - 1),
+    );
+  }, [initialSlides]);
+
+  useEffect(() => {
+    onSlidesChange(slides);
+  }, [slides, onSlidesChange]);
 
   const loadDraftFromSlide = useCallback((slide: SlideData | undefined) => {
     if (!slide) return;
@@ -145,12 +153,11 @@ const PreviewSection = ({
         const next = [...prev];
         next[idx] = { ...cur, content, pptContent };
         slidesRef.current = next;
-        onSlidesChange(next);
         persistCurrentSlide(next[idx]);
         return next;
       });
     },
-    [onSlidesChange, persistCurrentSlide],
+    [persistCurrentSlide],
   );
 
   useEffect(() => {
@@ -258,7 +265,6 @@ const PreviewSection = ({
       const next = [...prev];
       next[index] = { ...next[index], ...patch };
       slidesRef.current = next;
-      onSlidesChange(next);
       persistCurrentSlide(next[index]);
       return next;
     });

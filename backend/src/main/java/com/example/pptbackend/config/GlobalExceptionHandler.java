@@ -1,6 +1,9 @@
 package com.example.pptbackend.config;
 
 import jakarta.persistence.EntityNotFoundException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -17,6 +20,31 @@ import java.util.Map;
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    @ExceptionHandler(DataAccessException.class)
+    public ResponseEntity<Map<String, String>> dataAccess(DataAccessException exception) {
+        log.error("Database error", exception);
+        String detail = exception.getMostSpecificCause() != null
+            ? exception.getMostSpecificCause().getMessage()
+            : exception.getMessage();
+        String msg = "数据库访问失败，请确认 PostgreSQL 已启动且表结构已更新。"
+            + (detail != null && !detail.isBlank() ? " 详情：" + detail : "");
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("message", msg));
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<Map<String, String>> generic(Exception exception) {
+        if (exception instanceof AsyncRequestNotUsableException async) {
+            clientDisconnected(async);
+            return ResponseEntity.status(HttpStatus.NO_CONTENT).build();
+        }
+        log.error("Unhandled error", exception);
+        String msg = exception.getMessage() != null ? exception.getMessage() : exception.getClass().getSimpleName();
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+            .body(Map.of("message", "服务器内部错误：" + msg));
+    }
 
     @ExceptionHandler(EntityNotFoundException.class)
     public ResponseEntity<Map<String, String>> notFound(EntityNotFoundException exception) {

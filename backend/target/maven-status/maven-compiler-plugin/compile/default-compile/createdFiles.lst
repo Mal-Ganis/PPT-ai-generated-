@@ -1,5 +1,6 @@
 com\example\pptbackend\dto\PptDisplayExtractionStatusDto.class
 com\example\pptbackend\service\EvaluationReportService.class
+com\example\pptbackend\config\SlideCollectionOrderCleanup.class
 com\example\pptbackend\service\StructuralSlideDetector.class
 com\example\pptbackend\model\Slide.class
 com\example\pptbackend\service\PptDisplayExtractionService$1.class

@@ -196,6 +196,19 @@ const SystemConfigSection = ({ onBack, onSave }: SystemConfigSectionProps) => {
                   className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-[#3898ec] focus:ring-2 focus:ring-[#3898ec]/20"
                 />
               </label>
+              <label className="flex items-center gap-3 lg:col-span-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={config.outlineIncludeQaSlide !== false}
+                  onChange={(event) =>
+                    setConfig({ ...config, outlineIncludeQaSlide: event.target.checked })
+                  }
+                  className="h-4 w-4 rounded border-gray-300 text-[#3898ec] focus:ring-[#3898ec]"
+                />
+                <span className="text-sm text-[#1f1f1f]">
+                  大纲统一包含 Q&A 页（开启后每份大纲必有「Q&A/问答」页，模型未生成时自动补页）
+                </span>
+              </label>
             </div>
 
             <div className="grid gap-4">

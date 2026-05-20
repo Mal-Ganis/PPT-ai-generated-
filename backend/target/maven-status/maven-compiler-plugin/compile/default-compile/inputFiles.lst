@@ -2,6 +2,7 @@ C:\Users\wenwe\Desktop\PPTai\PPT-ai-generated-\backend\src\main\java\com\example
 C:\Users\wenwe\Desktop\PPTai\PPT-ai-generated-\backend\src\main\java\com\example\pptbackend\config\CorsConfig.java
 C:\Users\wenwe\Desktop\PPTai\PPT-ai-generated-\backend\src\main\java\com\example\pptbackend\config\GlobalExceptionHandler.java
 C:\Users\wenwe\Desktop\PPTai\PPT-ai-generated-\backend\src\main\java\com\example\pptbackend\config\RestTemplateConfig.java
+C:\Users\wenwe\Desktop\PPTai\PPT-ai-generated-\backend\src\main\java\com\example\pptbackend\config\SlideCollectionOrderCleanup.java
 C:\Users\wenwe\Desktop\PPTai\PPT-ai-generated-\backend\src\main\java\com\example\pptbackend\config\SystemConfigLegacyColumnsCleanup.java
 C:\Users\wenwe\Desktop\PPTai\PPT-ai-generated-\backend\src\main\java\com\example\pptbackend\controller\EvaluationReportController.java
 C:\Users\wenwe\Desktop\PPTai\PPT-ai-generated-\backend\src\main\java\com\example\pptbackend\controller\ExternalSourceController.java
