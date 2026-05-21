@@ -28,6 +28,29 @@ public class IndexSegmentService {
     }
 
     @Transactional
+    public void deleteByProjectId(Long projectId) {
+        if (projectId == null) {
+            return;
+        }
+        jdbcTemplate.update("DELETE FROM index_segments WHERE project_id = ?", projectId);
+    }
+
+    @Transactional
+    public void deleteByProjectIds(java.util.Collection<Long> projectIds) {
+        if (projectIds == null || projectIds.isEmpty()) {
+            return;
+        }
+        java.util.List<Long> ids = projectIds.stream().filter(java.util.Objects::nonNull).distinct().toList();
+        if (ids.isEmpty()) {
+            return;
+        }
+        String placeholders = ids.stream().map(id -> "?").collect(Collectors.joining(","));
+        jdbcTemplate.update(
+            "DELETE FROM index_segments WHERE project_id IN (" + placeholders + ")",
+            ids.toArray());
+    }
+
+    @Transactional
     public Long indexSegment(IndexSegmentRequest request) {
         validateSegmentRequest(request);
 

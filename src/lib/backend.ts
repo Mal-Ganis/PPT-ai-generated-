@@ -126,6 +126,9 @@ export interface ProjectSummary {
   title: string;
   createdAt: string;
   updatedAt: string;
+  hasScript?: boolean;
+  hasPpt?: boolean;
+  stage?: string;
 }
 
 export interface ProjectDetailSlide {
@@ -250,9 +253,24 @@ export const resetSystemConfigToDefaults = async (): Promise<SystemConfig> => {
   return response.data;
 };
 
+const LIST_PROJECTS_TIMEOUT_MS = 30_000;
+
 export const listProjects = async (): Promise<ProjectSummary[]> => {
-  const response = await backendApi.get<ProjectSummary[]>('/api/projects');
+  const response = await backendApi.get<ProjectSummary[]>('/api/projects', {
+    timeout: LIST_PROJECTS_TIMEOUT_MS,
+  });
   return response.data;
+};
+
+export const deleteProject = async (projectId: number): Promise<void> => {
+  await backendApi.delete(`/api/projects/${projectId}`);
+};
+
+export const deleteProjectsBatch = async (projectIds: number[]): Promise<number> => {
+  const response = await backendApi.post<{ deletedCount: number }>('/api/projects/batch-delete', {
+    projectIds,
+  });
+  return response.data.deletedCount;
 };
 
 export interface FetchProjectOptions {
@@ -331,6 +349,31 @@ export const syncProjectOutline = async (
   payload: UpsertOutlinePayload,
 ): Promise<void> => {
   await backendApi.put(`/api/projects/${projectId}/outline`, payload);
+};
+
+export interface RegenerateOutlinePayload {
+  topic: string;
+  presentationDurationMinutes?: number;
+  inputType?: 'topic' | 'document';
+  inputContent?: string;
+}
+
+/** 在已有项目上按主题重新生成大纲 */
+export const regenerateProjectOutline = async (
+  projectId: number,
+  payload: RegenerateOutlinePayload,
+): Promise<ProjectOutlineResponse> => {
+  const response = await backendApi.post<ProjectOutlineResponse>(
+    `/api/projects/${projectId}/outline/regenerate`,
+    {
+      topic: payload.topic,
+      presentationDurationMinutes: payload.presentationDurationMinutes,
+      inputType: payload.inputType ?? 'topic',
+      inputContent: payload.inputContent ?? payload.topic,
+    },
+    { timeout: SLIDE_PIPELINE_AXIOS_TIMEOUT_MS },
+  );
+  return response.data;
 };
 
 /** PATCH 单页：不影响项目中其它幻灯片 */

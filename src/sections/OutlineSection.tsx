@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, Plus, Trash2, GripVertical, Sparkles, Loader2 } from 'lucide-react';
+import { ArrowRight, Plus, Trash2, GripVertical, Sparkles, Loader2, RotateCcw } from 'lucide-react';
 import { FlowExitNav } from '@/components/FlowExitNav';
 import { WorkflowStepActions } from '@/components/WorkflowStepActions';
 import { Button } from '@/components/ui/button';
@@ -16,10 +16,14 @@ interface OutlineSectionProps {
   outline: OutlineData;
   /** 父级从服务端/会话重载大纲时递增，仅此时才把 outline.slides 同步到本地 */
   outlineRevision: number;
+  /** 用户输入的主题/文档说明，用于重新生成大纲 */
+  deckTheme: string;
+  inputType?: 'topic' | 'document';
   workflowProgress: WorkflowProgress;
   onGoToStep: (step: WorkflowStep) => void;
   onSlidesChange: (slides: SlideData[]) => void;
   onConfirm: (slides: SlideData[], reportProgress?: (message: string) => void) => Promise<void>;
+  onRegenerateOutline: (topic: string) => Promise<void>;
   /** 进入单页高级编辑前写入 session，便于「返回流程」恢复到大纲步骤 */
   onPersistFlowSession?: (outlineSlides: SlideData[]) => void;
 }
@@ -28,17 +32,26 @@ const OutlineSection = ({
   projectId,
   outline,
   outlineRevision,
+  deckTheme,
+  inputType = 'topic',
   workflowProgress,
   onGoToStep,
   onSlidesChange,
   onConfirm,
+  onRegenerateOutline,
   onPersistFlowSession,
 }: OutlineSectionProps) => {
   const [slides, setSlides] = useState<SlideData[]>(outline.slides);
+  const [topicInput, setTopicInput] = useState(deckTheme);
+  const [isRegeneratingOutline, setIsRegeneratingOutline] = useState(false);
 
   useEffect(() => {
     setSlides(outline.slides);
   }, [outlineRevision, outline.slides]);
+
+  useEffect(() => {
+    setTopicInput(deckTheme);
+  }, [deckTheme, outlineRevision]);
 
   const applySlides = useCallback(
     (updater: (prev: SlideData[]) => SlideData[]) => {
@@ -194,17 +207,52 @@ const OutlineSection = ({
     }
   };
 
+  const handleRegenerateOutline = async () => {
+    if (projectId == null) {
+      alert('缺少项目 ID，请返回输入页重新创建。');
+      return;
+    }
+    const topic = topicInput.trim();
+    if (!topic) {
+      alert('请先填写演示主题');
+      return;
+    }
+    setIsRegeneratingOutline(true);
+    setStatusMessage('正在根据主题重新生成大纲…');
+    try {
+      await onRegenerateOutline(topic);
+    } finally {
+      setIsRegeneratingOutline(false);
+      setStatusMessage('');
+    }
+  };
+
+  const busy = isLoading || isRegeneratingOutline;
+
   return (
     <section className="min-h-screen pt-24 pb-16 bg-[#f3f3f3]">
       <div className="section-container">
         <div className="section-inner max-w-5xl">
           <FlowExitNav className="mb-4" />
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
-            <div>
+            <div className="min-w-0 flex-1">
               <h1 className="text-2xl sm:text-3xl font-bold text-[#1f1f1f] mb-2">大纲编辑</h1>
-              <p className="text-[#1f1f1f]/60">主题：{outline.title}</p>
+              <p className="text-[#1f1f1f]/60 mb-3">演示标题：{outline.title}</p>
+              <div className="max-w-xl space-y-2">
+                <label className="text-sm font-medium text-[#1f1f1f]/80 block">
+                  {inputType === 'document' ? '文档主题 / 说明' : '演示主题'}
+                  <span className="text-[#1f1f1f]/50 font-normal ml-1">（重新生成大纲时使用）</span>
+                </label>
+                <Input
+                  value={topicInput}
+                  onChange={(e) => setTopicInput(e.target.value)}
+                  disabled={busy}
+                  placeholder={inputType === 'document' ? '可修改文档主题或补充说明' : '输入主题，如：企业数字化转型战略'}
+                  className="bg-white border-gray-200"
+                />
+              </div>
               {outline.presentationDurationMinutes != null && (
-                <p className="text-sm text-[#3898ec] mt-1">
+                <p className="text-sm text-[#3898ec] mt-3">
                   目标演讲时长：{outline.presentationDurationMinutes} 分钟（正文将按此时长控制密度）
                 </p>
               )}
@@ -213,32 +261,53 @@ const OutlineSection = ({
               currentStep="outline"
               progress={workflowProgress}
               onGoToStep={onGoToStep}
-              busy={isLoading}
+              busy={busy}
               primaryAction={
-                <Button
-                  onClick={() => void handleConfirm()}
-                  disabled={isLoading}
-                  className="bg-[#3898ec] hover:bg-[#0082f3] text-white"
-                >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      AI 正在全力工作...
-                    </>
-                  ) : workflowProgress.hasContent ? (
-                    <>
-                      <Sparkles className="w-4 h-4 mr-2" />
-                      重新生成内容
-                      <ArrowRight className="w-4 h-4 ml-2" />
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="w-4 h-4 mr-2" />
-                      生成内容
-                      <ArrowRight className="w-4 h-4 ml-2" />
-                    </>
-                  )}
-                </Button>
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void handleRegenerateOutline()}
+                    disabled={busy || projectId == null}
+                    className="border-gray-200 text-[#1f1f1f]"
+                  >
+                    {isRegeneratingOutline ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        生成大纲中…
+                      </>
+                    ) : (
+                      <>
+                        <RotateCcw className="w-4 h-4 mr-2" />
+                        重新生成大纲
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    onClick={() => void handleConfirm()}
+                    disabled={busy}
+                    className="bg-[#3898ec] hover:bg-[#0082f3] text-white"
+                  >
+                    {isLoading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        AI 正在全力工作...
+                      </>
+                    ) : workflowProgress.hasContent ? (
+                      <>
+                        <Sparkles className="w-4 h-4 mr-2" />
+                        重新生成内容
+                        <ArrowRight className="w-4 h-4 ml-2" />
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4 mr-2" />
+                        生成内容
+                        <ArrowRight className="w-4 h-4 ml-2" />
+                      </>
+                    )}
+                  </Button>
+                </>
               }
             />
           </div>
@@ -341,7 +410,7 @@ const OutlineSection = ({
                           value={slide.title}
                           onChange={(e) => patchSlide(index, { title: e.target.value })}
                           onBlur={() => handleSlideBlur(index)}
-                          disabled={isLoading}
+                          disabled={busy}
                           className="font-semibold"
                         />
                       </div>
@@ -368,7 +437,7 @@ const OutlineSection = ({
                               value={item}
                               onChange={(e) => updateBullet(index, idx, e.target.value)}
                               onBlur={() => handleSlideBlur(index)}
-                              disabled={isLoading}
+                              disabled={busy}
                               className="flex-1"
                               placeholder="输入本页要点"
                             />
@@ -389,7 +458,7 @@ const OutlineSection = ({
                         variant="outline"
                         size="sm"
                         onClick={() => addBullet(index)}
-                        disabled={isLoading}
+                        disabled={busy}
                         className="mt-2 border-dashed"
                       >
                         <Plus className="w-4 h-4 mr-1" />
@@ -401,7 +470,7 @@ const OutlineSection = ({
                   <button
                     type="button"
                     onClick={() => handleDeleteSlide(slide.id)}
-                    disabled={isLoading}
+                    disabled={busy}
                     className="p-2 hover:bg-red-50 text-[#1f1f1f]/40 hover:text-red-500 rounded-lg transition-colors"
                     aria-label="删除本页"
                   >
@@ -415,7 +484,7 @@ const OutlineSection = ({
           <button
             type="button"
             onClick={handleAddSlide}
-            disabled={isLoading}
+            disabled={busy}
             className="w-full py-4 border-2 border-dashed border-gray-300 hover:border-[#3898ec] rounded-xl text-[#1f1f1f]/50 hover:text-[#3898ec] transition-all duration-300 flex items-center justify-center gap-2 disabled:opacity-50"
           >
             <Plus className="w-5 h-5" />
@@ -424,7 +493,8 @@ const OutlineSection = ({
 
           <div className="mt-8 p-4 bg-[#3898ec]/5 rounded-xl">
             <p className="text-sm text-[#3898ec]">
-              提示：可直接编辑每页标题与纲要要点（含手动添加的新页）；拖拽 ≡ 调整顺序。顶部「上一步 / 下一步」可在输入、大纲、内容之间切换。已有后端记录的页失焦时会自动保存；新页在点击「生成内容」时一并同步。            </p>
+              提示：可编辑主题后点「重新生成大纲」换一版结构；满意后再点「生成内容」。可直接编辑每页标题与要点，拖拽 ≡ 调整顺序。
+            </p>
           </div>
         </div>
       </div>

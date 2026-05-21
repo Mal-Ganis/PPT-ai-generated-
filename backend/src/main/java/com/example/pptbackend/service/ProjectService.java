@@ -6,9 +6,11 @@ import com.example.pptbackend.dto.ProjectDetailResponse;
 import com.example.pptbackend.dto.ProjectOutlineResponse;
 import com.example.pptbackend.dto.ProjectSummaryDto;
 import com.example.pptbackend.dto.ExternalSourceDocument;
+import com.example.pptbackend.dto.RegenerateOutlineRequest;
 import com.example.pptbackend.dto.UpdateSlideRequest;
 import com.example.pptbackend.model.Project;
 import com.example.pptbackend.model.Slide;
+import com.example.pptbackend.repository.EvaluationReportRepository;
 import com.example.pptbackend.repository.ProjectRepository;
 import com.example.pptbackend.repository.SlideRepository;
 import jakarta.persistence.EntityNotFoundException;
@@ -24,7 +26,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -34,11 +40,14 @@ public class ProjectService {
 
     private final ProjectRepository projectRepository;
     private final SlideRepository slideRepository;
+    private final EvaluationReportRepository evaluationReportRepository;
     private final EvaluationReportService evaluationReportService;
+    private final ProjectWorkflowStageService projectWorkflowStageService;
     private final DocumentIndexingService documentIndexingService;
     private final OutlineGenerationService outlineGenerationService;
     private final ExternalKnowledgeSourceService externalKnowledgeSourceService;
     private final DeferredProjectExternalIndexService deferredProjectExternalIndexService;
+    private final IndexSegmentService indexSegmentService;
 
     @Value("${outline.use-external-retrieval:true}")
     private boolean outlineUseExternalRetrieval;
@@ -51,18 +60,24 @@ public class ProjectService {
 
     public ProjectService(ProjectRepository projectRepository,
                           SlideRepository slideRepository,
+                          EvaluationReportRepository evaluationReportRepository,
                           EvaluationReportService evaluationReportService,
+                          ProjectWorkflowStageService projectWorkflowStageService,
                           DocumentIndexingService documentIndexingService,
                           OutlineGenerationService outlineGenerationService,
                           ExternalKnowledgeSourceService externalKnowledgeSourceService,
-                          DeferredProjectExternalIndexService deferredProjectExternalIndexService) {
+                          DeferredProjectExternalIndexService deferredProjectExternalIndexService,
+                          IndexSegmentService indexSegmentService) {
         this.projectRepository = projectRepository;
         this.slideRepository = slideRepository;
+        this.evaluationReportRepository = evaluationReportRepository;
         this.evaluationReportService = evaluationReportService;
+        this.projectWorkflowStageService = projectWorkflowStageService;
         this.documentIndexingService = documentIndexingService;
         this.outlineGenerationService = outlineGenerationService;
         this.externalKnowledgeSourceService = externalKnowledgeSourceService;
         this.deferredProjectExternalIndexService = deferredProjectExternalIndexService;
+        this.indexSegmentService = indexSegmentService;
     }
 
     @Transactional
@@ -146,6 +161,88 @@ public class ProjectService {
         }
         applySlides(project, request.getSlides());
         projectRepository.save(project);
+    }
+
+    /**
+     * 按用户主题（及文档向量上下文）重新生成大纲并替换当前项目幻灯片结构。
+     */
+    @Transactional
+    public ProjectOutlineResponse regenerateOutline(Long projectId, RegenerateOutlineRequest request) {
+        Project project = projectRepository.findById(projectId)
+            .orElseThrow(() -> new EntityNotFoundException("Project not found: " + projectId));
+
+        String cleanTopic = request != null && request.getTopic() != null && !request.getTopic().isBlank()
+            ? request.getTopic().trim()
+            : (project.getTheme() != null ? project.getTheme().trim() : "");
+        if (cleanTopic.isBlank()) {
+            throw new IllegalArgumentException("请提供演示主题");
+        }
+
+        int minutes = PresentationDurationPlanner.clampMinutes(
+            request != null && request.getPresentationDurationMinutes() != null
+                ? request.getPresentationDurationMinutes()
+                : project.getPresentationDurationMinutes());
+
+        String inputType = request != null && request.getInputType() != null ? request.getInputType() : "topic";
+        String inputContent = request != null ? request.getInputContent() : null;
+        String augmented = buildAugmentedOutlinePrompt(projectId, cleanTopic, inputType, inputContent);
+
+        ProjectOutlineResponse outline = outlineGenerationService.generateOutline(augmented, minutes);
+        CreateProjectRequest upsert = new CreateProjectRequest();
+        upsert.setTitle(outline.getTitle() != null ? outline.getTitle() : cleanTopic);
+        upsert.setTheme(cleanTopic);
+        upsert.setSlides(mapOutlineToSlides(outline));
+
+        project.setPresentationDurationMinutes(minutes);
+        projectRepository.save(project);
+        evaluationReportRepository.deleteByProjectId(projectId);
+        replaceOutline(projectId, upsert);
+        return buildOutlineResponse(projectId);
+    }
+
+    private String buildAugmentedOutlinePrompt(Long projectId,
+                                               String topic,
+                                               String inputType,
+                                               String inputContent) {
+        if ("document".equalsIgnoreCase(inputType)
+            && inputContent != null
+            && !inputContent.isBlank()) {
+            String rag = documentIndexingService.buildRagContext(
+                projectId, topic + "\n" + truncate(inputContent, 1500));
+            String augmented = topic + "\n\n上传全文节选：\n" + truncate(inputContent, 3200);
+            if (!rag.isBlank()) {
+                augmented = augmented + "\n\n向量检索到的文档片段：\n" + rag;
+            } else {
+                augmented = augmented
+                    + "\n\n（说明：当前向量库未命中相似片段，请主要依据上方节选组织大纲；可适当扩展章节。）\n";
+            }
+            return appendExternalOutlineContext(projectId, augmented, topic);
+        }
+        return appendExternalOutlineContext(projectId, topic, topic);
+    }
+
+    private String appendExternalOutlineContext(Long projectId, String base, String searchQuery) {
+        if (!outlineUseExternalRetrieval) {
+            return base;
+        }
+        try {
+            List<ExternalSourceDocument> docs =
+                externalKnowledgeSourceService.searchExternalSources(searchQuery, outlineExternalResultLimit);
+            if (!docs.isEmpty()) {
+                scheduleExternalSnippetIndexAfterCommit(projectId, docs);
+                log.info(
+                    "Outline regenerate: scheduled deferred vector index for {} snippets, project {}",
+                    docs.size(),
+                    projectId);
+                return base + "\n\n"
+                    + externalKnowledgeSourceService.formatDocumentsForOutlinePrompt(
+                        docs, outlineExternalSnippetMaxChars);
+            }
+            log.info("Outline regenerate: external retrieval returned no documents");
+        } catch (Exception e) {
+            log.warn("Outline external retrieval failed, falling back: {}", e.getMessage());
+        }
+        return base;
     }
 
     /**
@@ -257,17 +354,62 @@ public class ProjectService {
 
     @Transactional(readOnly = true)
     public List<ProjectSummaryDto> listProjects() {
-        return projectRepository.findAll(Sort.by(Sort.Direction.DESC, "updatedAt"))
-            .stream()
+        List<Project> projects = projectRepository.findAll(Sort.by(Sort.Direction.DESC, "updatedAt"));
+        if (projects.isEmpty()) {
+            return List.of();
+        }
+        List<Long> projectIds = projects.stream().map(Project::getId).toList();
+        Map<Long, List<Slide>> slidesByProject = new HashMap<>();
+        for (Slide slide : slideRepository.findByProject_IdInWithProjectOrderByPositionAsc(projectIds)) {
+            Long pid = slide.getProject().getId();
+            slidesByProject.computeIfAbsent(pid, k -> new ArrayList<>()).add(slide);
+        }
+        Map<Long, ProjectWorkflowStageService.StageSnapshot> stages =
+            projectWorkflowStageService.evaluateProjects(slidesByProject);
+        return projects.stream()
             .map(project -> {
                 ProjectSummaryDto dto = new ProjectSummaryDto();
                 dto.setId(project.getId());
                 dto.setTitle(project.getTitle());
                 dto.setCreatedAt(project.getCreatedAt());
                 dto.setUpdatedAt(project.getUpdatedAt());
+                ProjectWorkflowStageService.StageSnapshot stage = stages.getOrDefault(
+                    project.getId(),
+                    new ProjectWorkflowStageService.StageSnapshot(false, false, "仅大纲"));
+                dto.setHasScript(stage.hasGeneratedContent());
+                dto.setHasPpt(stage.hasReadyPreview());
+                dto.setStage(stage.stageLabel());
                 return dto;
             })
             .collect(Collectors.toList());
+    }
+
+    @Transactional
+    public void deleteProject(Long projectId) {
+        deleteProjects(List.of(projectId));
+    }
+
+    @Transactional
+    public int deleteProjects(List<Long> projectIds) {
+        if (projectIds == null || projectIds.isEmpty()) {
+            throw new IllegalArgumentException("projectIds is required");
+        }
+        List<Long> ids = projectIds.stream().filter(Objects::nonNull).distinct().toList();
+        if (ids.isEmpty()) {
+            throw new IllegalArgumentException("projectIds is required");
+        }
+        for (Long id : ids) {
+            if (!projectRepository.existsById(id)) {
+                throw new EntityNotFoundException("Project not found: " + id);
+            }
+        }
+        for (Long id : ids) {
+            evaluationReportRepository.deleteByProjectId(id);
+        }
+        indexSegmentService.deleteByProjectIds(ids);
+        projectRepository.deleteAllById(ids);
+        log.info("Deleted {} project(s): {}", ids.size(), ids);
+        return ids.size();
     }
 
     @Transactional(readOnly = true)

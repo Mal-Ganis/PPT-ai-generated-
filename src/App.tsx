@@ -19,6 +19,7 @@ import {
   createProjectFromDocument,
   uploadDocumentFile,
   syncProjectOutline,
+  regenerateProjectOutline,
   generateSlideContents,
   saveProjectSlides,
   extractPptDisplayContents,
@@ -37,10 +38,17 @@ import {
   type MainFlowSession,
 } from './lib/mainFlowSession';
 import {
+  detailHasGeneratedContent,
+  resolveOpenStep,
+  slidesHaveGeneratedContent,
+} from './lib/projectProgress';
+import { projectNeedsPptExtraction, slidesHaveReadyPreview } from './lib/pptExtraction';
+import {
   canGoToWorkflowStep,
   getWorkflowProgress,
   type WorkflowStep,
 } from './lib/workflowSteps';
+import { toast } from 'sonner';
 
 export type AppStep =
   | 'home'
@@ -92,20 +100,12 @@ function ProjectsPage() {
   return (
     <div className="min-h-screen bg-[#f3f3f3]">
       <ProjectsSection
-        onBack={() => navigate('/', { replace: true, state: { resumeMainFlow: Date.now() } })}
-        onOpenProject={(id) => navigate('/', { state: { openProjectId: id } })}
+        onOpenProject={(id, step) =>
+          navigate('/', { state: { openProjectId: id, openProjectStep: step } })
+        }
       />
     </div>
   );
-}
-
-function resolveStepFromProjectDetail(detail: Awaited<ReturnType<typeof fetchProject>>): AppStep {
-  const slides = detail.slides ?? [];
-  const hasPpt = slides.some((s) => (s.pptBullets?.length ?? 0) > 0);
-  const hasContent = slides.some((s) => (s.bullets?.length ?? 0) > 0 || (s.body?.length ?? 0) > 0);
-  if (hasPpt) return 'preview';
-  if (hasContent) return 'content';
-  return 'outline';
 }
 
 export function MainFlow() {
@@ -132,6 +132,15 @@ export function MainFlow() {
   const [finalSlides, setFinalSlides] = useState<SlideData[] | null>(
     () => resumeSessionOnMount?.finalSlides ?? null,
   );
+  const [previewUnlocked, setPreviewUnlocked] = useState(() => {
+    const slides = resumeSessionOnMount?.finalSlides;
+    const hasGenerated = slides != null && slidesHaveGeneratedContent(slides);
+    if (!hasGenerated) return false;
+    return (
+      resumeSessionOnMount?.previewUnlocked ??
+      slidesHaveReadyPreview(slides)
+    );
+  });
   const sessionHydratedRef = useRef(resumeSessionOnMount != null);
 
   const bumpOutlineRevision = useCallback(() => {
@@ -187,6 +196,7 @@ export function MainFlow() {
       return;
     }
     setOutlineData((prev) => (prev ? { ...prev, slides } : null));
+    setPreviewUnlocked(false);
     try {
       await syncProjectOutline(
         projectId,
@@ -250,9 +260,10 @@ export function MainFlow() {
           pptBullets: s.pptContent?.length ? s.pptContent : undefined,
         })),
       );
-      {
+      if (projectNeedsPptExtraction(slides)) {
         reportProgress?.('正在提炼适合 PPT 的短要点（DeepSeek）…');
         const detail = await extractPptDisplayContents(projectId, {
+          force: false,
           onProgress: (st) => {
             const msg =
               st.message?.trim() ||
@@ -263,7 +274,12 @@ export function MainFlow() {
           },
         });
         setFinalSlides(mapDetailToSlides(detail));
+      } else {
+        reportProgress?.('正在加载预览…');
+        const detail = await fetchProjectForSlides(projectId);
+        setFinalSlides(mapDetailToSlides(detail));
       }
+      setPreviewUnlocked(true);
       setCurrentStep('preview');
     } catch (e) {
       console.error(e);
@@ -281,6 +297,7 @@ export function MainFlow() {
     setOutlineData(null);
     setFinalSlides(null);
     setOutlineRevision(0);
+    setPreviewUnlocked(false);
   }, []);
 
   const applyMainFlowSession = useCallback((session: MainFlowSession) => {
@@ -288,31 +305,55 @@ export function MainFlow() {
     setProjectId(session.projectId);
     setInputData(session.inputData);
     setOutlineData(session.outlineData);
-    setFinalSlides(session.finalSlides);
+    const slides = session.finalSlides;
+    const hasGenerated = slides != null && slidesHaveGeneratedContent(slides);
+    setFinalSlides(hasGenerated ? slides : null);
+    setPreviewUnlocked(
+      !!session.previewUnlocked &&
+        hasGenerated &&
+        slidesHaveReadyPreview(slides ?? []),
+    );
     if (session.outlineData) {
       setOutlineRevision((r) => r + 1);
     }
   }, []);
 
-  const refreshProjectState = useCallback(async (id: number, preferredStep?: AppStep) => {
-    const detail = await fetchProject(id);
-    const mapped = mapDetailToSlides(detail);
-    setProjectId(id);
-    setInputData({ type: 'topic', content: detail.theme });
-    setOutlineData({
-      title: detail.title,
-      presentationDurationMinutes: detail.presentationDurationMinutes,
-      slides: mapped.map((s) => ({
-        ...s,
-        content: s.content.length ? s.content : ['（待编辑要点）'],
-      })),
-    });
-    const hasContent = mapped.some((s) => s.content.length > 0 && s.content[0] !== '（待编辑要点）');
-    setFinalSlides(hasContent ? mapped : null);
-    const step = preferredStep ?? resolveStepFromProjectDetail(detail);
-    setCurrentStep(isWorkflowStep(step) ? step : 'outline');
-    bumpOutlineRevision();
-  }, [bumpOutlineRevision]);
+  const refreshProjectState = useCallback(
+    async (id: number, preferredStep?: WorkflowStep) => {
+      const detail = await fetchProject(id);
+      const mapped = mapDetailToSlides(detail);
+      setProjectId(id);
+      setInputData({ type: 'topic', content: detail.theme });
+      setOutlineData({
+        title: detail.title,
+        presentationDurationMinutes: detail.presentationDurationMinutes,
+        slides: mapped.map((s) => ({
+          ...s,
+          content: s.content.length ? s.content : ['（待编辑要点）'],
+        })),
+      });
+      const hasGenerated = detailHasGeneratedContent(detail);
+      /** 仅已生成正文的项目才灌入 finalSlides，避免仅大纲时内容页展示大纲副本 */
+      setFinalSlides(hasGenerated && mapped.length > 0 ? mapped : null);
+      setPreviewUnlocked(hasGenerated && slidesHaveReadyPreview(mapped));
+
+      const target = resolveOpenStep(detail, preferredStep);
+      if (
+        preferredStep === 'content' &&
+        target === 'outline'
+      ) {
+        toast.info('该项目尚未保存正文，已打开大纲');
+      } else if (preferredStep === 'preview' && target === 'content') {
+        toast.info('该项目尚未生成预览，已打开内容');
+      } else if (preferredStep === 'preview' && target === 'outline') {
+        toast.info('该项目尚未保存正文，已打开大纲');
+      }
+
+      setCurrentStep(isWorkflowStep(target) ? target : 'outline');
+      bumpOutlineRevision();
+    },
+    [bumpOutlineRevision],
+  );
 
   const handleShowEvaluations = () => {
     setCurrentStep('evaluation');
@@ -326,16 +367,84 @@ export function MainFlow() {
     setCurrentStep('projects');
   };
 
-  const workflowProgress = getWorkflowProgress({ projectId, outlineData, finalSlides });
+  const workflowProgress = getWorkflowProgress({
+    projectId,
+    outlineData,
+    finalSlides,
+    previewUnlocked,
+  });
+
+  const handleRegenerateOutline = useCallback(
+    async (topic: string) => {
+      if (!projectId) {
+        alert('缺少项目上下文，请返回重新输入。');
+        return;
+      }
+      const trimmed = topic.trim();
+      if (!trimmed) {
+        alert('请输入演示主题');
+        return;
+      }
+      if (workflowProgress.hasContent) {
+        const ok = window.confirm(
+          '重新生成大纲将替换当前页面结构，已生成的正文与预览需要重新生成。是否继续？',
+        );
+        if (!ok) return;
+      }
+      try {
+        const minutes =
+          outlineData?.presentationDurationMinutes ??
+          inputData?.presentationDurationMinutes ??
+          15;
+        const result = await regenerateProjectOutline(projectId, {
+          topic: trimmed,
+          presentationDurationMinutes: minutes,
+          inputType: inputData?.type ?? 'topic',
+          inputContent: inputData?.content ?? trimmed,
+        });
+        setOutlineData(mapOutlineResponse(result));
+        setInputData((prev) =>
+          prev
+            ? { ...prev, content: trimmed }
+            : { type: 'topic', content: trimmed, presentationDurationMinutes: minutes },
+        );
+        setFinalSlides(null);
+        setPreviewUnlocked(false);
+        bumpOutlineRevision();
+        toast.success('大纲已重新生成');
+      } catch (error) {
+        console.error('Error regenerating outline:', error);
+      }
+    },
+    [
+      projectId,
+      workflowProgress.hasContent,
+      outlineData?.presentationDurationMinutes,
+      inputData,
+      bumpOutlineRevision,
+    ],
+  );
 
   const handleWorkflowNavigate = useCallback(
     (target: WorkflowStep) => {
       if (!canGoToWorkflowStep(target, workflowProgress)) {
         return;
       }
+      if (target === 'preview' && projectId != null) {
+        void (async () => {
+          try {
+            const detail = await fetchProjectForSlides(projectId);
+            setFinalSlides(mapDetailToSlides(detail));
+          } catch {
+            // 保留当前内存中的 slides
+          }
+          setCurrentStep('preview');
+        })();
+        return;
+      }
       setCurrentStep(target);
     },
-    [workflowProgress],
+    [workflowProgress, projectId],
   );
 
   const handleNavbarNavigate = useCallback(
@@ -354,11 +463,12 @@ export function MainFlow() {
   }, []);
 
   const handleOpenProject = useCallback(
-    async (id: number) => {
+    async (id: number, preferredStep?: WorkflowStep) => {
       try {
-        await refreshProjectState(id);
+        await refreshProjectState(id, preferredStep);
       } catch (e) {
         console.error(e);
+        toast.error(e instanceof Error ? e.message : '打开项目失败');
       }
     },
     [refreshProjectState],
@@ -383,9 +493,10 @@ export function MainFlow() {
         inputData,
         outlineData: outlineToSave,
         finalSlides,
+        previewUnlocked,
       });
     },
-    [currentStep, projectId, inputData, outlineData, finalSlides],
+    [currentStep, projectId, inputData, outlineData, finalSlides, previewUnlocked],
   );
 
   useEffect(() => {
@@ -398,6 +509,7 @@ export function MainFlow() {
       resetMainFlow?: number;
       resumeMainFlow?: number;
       openProjectId?: number;
+      openProjectStep?: WorkflowStep;
     } | null;
 
     if (st?.resetMainFlow != null) {
@@ -413,7 +525,8 @@ export function MainFlow() {
       void (async () => {
         if (session?.projectId) {
           try {
-            await refreshProjectState(session.projectId, session.currentStep);
+            const preferred = isWorkflowStep(session.currentStep) ? session.currentStep : undefined;
+            await refreshProjectState(session.projectId, preferred);
           } catch {
             applyMainFlowSession(session);
           }
@@ -444,7 +557,9 @@ export function MainFlow() {
     sessionHydratedRef.current = true;
     let cancelled = false;
     void (async () => {
-      await handleOpenProject(id);
+      const step =
+        st?.openProjectStep && isWorkflowStep(st.openProjectStep) ? st.openProjectStep : undefined;
+      await handleOpenProject(id, step);
       if (!cancelled) {
         navigate(location.pathname, { replace: true, state: {} });
       }
@@ -498,10 +613,13 @@ export function MainFlow() {
           projectId={projectId}
           outline={outlineData}
           outlineRevision={outlineRevision}
+          deckTheme={inputData?.content ?? outlineData.title}
+          inputType={inputData?.type ?? 'topic'}
           workflowProgress={workflowProgress}
           onGoToStep={handleWorkflowNavigate}
           onSlidesChange={handleOutlineSlidesChange}
           onConfirm={handleOutlineConfirm}
+          onRegenerateOutline={handleRegenerateOutline}
           onPersistFlowSession={persistMainFlowSession}
         />
       )}
@@ -530,6 +648,7 @@ export function MainFlow() {
           inputType={inputData?.type ?? 'topic'}
           inputContent={inputData?.content ?? ''}
           workflowProgress={workflowProgress}
+          previewUnlocked={previewUnlocked}
           onGoToStep={handleWorkflowNavigate}
           onSlidesChange={setFinalSlides}
           onReset={handleReset}
@@ -545,7 +664,7 @@ export function MainFlow() {
       )}
 
       {currentStep === 'projects' && (
-        <ProjectsSection onOpenProject={handleOpenProject} onBack={() => setCurrentStep('home')} />
+        <ProjectsSection onOpenProject={handleOpenProject} />
       )}
 
       {currentStep === 'home' && <Footer />}

@@ -1,5 +1,6 @@
 package com.example.pptbackend.controller;
 
+import com.example.pptbackend.dto.BatchDeleteProjectsRequest;
 import com.example.pptbackend.dto.CreateProjectRequest;
 import com.example.pptbackend.dto.DocumentProjectRequest;
 import com.example.pptbackend.dto.GenerateSlidesRequest;
@@ -8,6 +9,7 @@ import com.example.pptbackend.dto.ProjectOutlineResponse;
 import com.example.pptbackend.dto.ProjectSummaryDto;
 import com.example.pptbackend.dto.SlideContentResponse;
 import com.example.pptbackend.dto.SlideGenerationStatusDto;
+import com.example.pptbackend.dto.RegenerateOutlineRequest;
 import com.example.pptbackend.dto.TopicProjectRequest;
 import com.example.pptbackend.dto.UpdateSlideRequest;
 import com.example.pptbackend.service.DocumentTextExtractionService;
@@ -20,6 +22,7 @@ import com.example.pptbackend.service.SlideGenerationService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -137,6 +140,15 @@ public class ProjectController {
         return ResponseEntity.noContent().build();
     }
 
+    /** 在已有项目上按主题重新生成大纲（替换当前幻灯片列表） */
+    @PostMapping("/{projectId:\\d+}/outline/regenerate")
+    public ResponseEntity<ProjectOutlineResponse> regenerateOutline(
+        @PathVariable("projectId") Long projectId,
+        @RequestBody RegenerateOutlineRequest request
+    ) {
+        return ResponseEntity.ok(projectService.regenerateOutline(projectId, request));
+    }
+
     /** 仅更新一页，不影响项目中其它幻灯片 */
     @PatchMapping("/{projectId:\\d+}/slides/{slideId:\\d+}")
     public ResponseEntity<ProjectDetailResponse> patchSlide(@PathVariable("projectId") Long projectId,
@@ -199,6 +211,19 @@ public class ProjectController {
         @PathVariable("slideId") Long slideId
     ) {
         return ResponseEntity.ok(pptDisplayExtractionService.extractAndSaveSlide(projectId, slideId));
+    }
+
+    @DeleteMapping("/{projectId:\\d+}")
+    public ResponseEntity<Void> deleteProject(@PathVariable("projectId") Long projectId) {
+        projectService.deleteProject(projectId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/batch-delete")
+    public ResponseEntity<Map<String, Integer>> batchDeleteProjects(@RequestBody BatchDeleteProjectsRequest request) {
+        List<Long> ids = request != null ? request.getProjectIds() : List.of();
+        int deleted = projectService.deleteProjects(ids);
+        return ResponseEntity.ok(Map.of("deletedCount", deleted));
     }
 
     @GetMapping("/{projectId:\\d+}")

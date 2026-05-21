@@ -10,4 +10,8 @@ import java.util.List;
 public interface EvaluationReportRepository extends JpaRepository<EvaluationReport, Long> {
 
     List<EvaluationReport> findByProjectIdOrderByEvaluationTimeDesc(Long projectId);
+
+    boolean existsByProjectId(Long projectId);
+
+    void deleteByProjectId(Long projectId);
 }

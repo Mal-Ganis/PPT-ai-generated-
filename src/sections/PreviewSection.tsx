@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   FileText,
-  ArrowLeft,
   RotateCcw,
   ChevronLeft,
   ChevronRight,
@@ -33,6 +32,11 @@ import {
   type EvaluationReport,
 } from '@/lib/backend';
 import { bulletsToEditableText, editableTextToBullets } from '@/lib/bulletsText';
+import {
+  bulletsEqual,
+  projectNeedsPptExtraction,
+  slidesHaveReadyPreview,
+} from '@/lib/pptExtraction';
 import type { SlideData } from '../App';
 
 interface PreviewSectionProps {
@@ -44,24 +48,10 @@ interface PreviewSectionProps {
   inputContent: string;
   onSlidesChange: (slides: SlideData[]) => void;
   workflowProgress: WorkflowProgress;
+  /** 已在内容页完成编辑并提炼过预览时，回到预览不再自动全量提炼 */
+  previewUnlocked?: boolean;
   onGoToStep: (step: WorkflowStep) => void;
   onReset: () => void;
-}
-
-function bulletsEqual(a: string[], b: string[]): boolean {
-  if (a.length !== b.length) return false;
-  return a.every((line, i) => line.trim() === b[i]?.trim());
-}
-
-/** 讲稿已有内容但尚未提炼出独立的 PPT 要点 */
-function slideNeedsPptExtraction(slide: SlideData): boolean {
-  if (slide.content.length === 0) return false;
-  if (slide.pptContent.length === 0) return true;
-  return bulletsEqual(slide.pptContent, slide.content);
-}
-
-function projectNeedsPptExtraction(slides: SlideData[]): boolean {
-  return slides.some(slideNeedsPptExtraction);
 }
 
 const PreviewSection = ({
@@ -73,6 +63,7 @@ const PreviewSection = ({
   inputContent,
   onSlidesChange,
   workflowProgress,
+  previewUnlocked = false,
   onGoToStep,
   onReset,
 }: PreviewSectionProps) => {
@@ -254,11 +245,17 @@ const PreviewSection = ({
   );
 
   useEffect(() => {
+    autoExtractStartedRef.current = false;
+  }, [projectId]);
+
+  /** 仅当从未提炼过 PPT 要点时自动提炼；已解锁预览或数据已就绪时不重复调用 */
+  useEffect(() => {
     if (projectId == null || autoExtractStartedRef.current) return;
+    if (previewUnlocked && slidesHaveReadyPreview(slidesRef.current)) return;
     if (!projectNeedsPptExtraction(slidesRef.current)) return;
     autoExtractStartedRef.current = true;
-    void runExtractAll(true);
-  }, [projectId, runExtractAll]);
+    void runExtractAll(false);
+  }, [projectId, initialSlides, previewUnlocked, runExtractAll]);
 
   const updateSlideAt = (index: number, patch: Partial<SlideData>) => {
     setSlides((prev) => {

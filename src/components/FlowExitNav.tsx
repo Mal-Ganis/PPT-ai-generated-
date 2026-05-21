@@ -4,16 +4,18 @@ import { Button } from '@/components/ui/button';
 
 interface FlowExitNavProps {
   className?: string;
+  /** 当前已在历史项目列表页时设为 true，隐藏「项目列表」入口 */
+  onProjectsPage?: boolean;
 }
 
 /**
  * 主流程在 `/` 的 state 在切到子路由（如单页详情）时会随 MainFlow 卸载而丢失；
  * 流程进度由 sessionStorage 持久化，子路由应使用「返回流程」而非裸 navigate('/')。
  */
-export function FlowExitNav({ className }: FlowExitNavProps) {
+export function FlowExitNav({ className, onProjectsPage }: FlowExitNavProps) {
   const navigate = useNavigate();
   const location = useLocation();
-  const isProjectsRoute = location.pathname === '/projects';
+  const isProjectsRoute = location.pathname === '/projects' || onProjectsPage === true;
   const isMainFlowRoute = location.pathname === '/';
 
   const goHome = () => {

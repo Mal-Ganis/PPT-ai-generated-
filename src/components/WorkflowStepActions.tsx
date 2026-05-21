@@ -14,7 +14,7 @@ interface WorkflowStepActionsProps {
   progress: WorkflowProgress;
   onGoToStep: (step: WorkflowStep) => void;
   busy?: boolean;
-  /** 主操作（如「生成内容」「完成编辑」），放在上一步与下一步之间 */
+  /** 主操作（如「生成内容」「完成编辑」），排在上一步/下一步之后 */
   primaryAction?: React.ReactNode;
 }
 
@@ -32,27 +32,31 @@ export function WorkflowStepActions({
 
   return (
     <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-      <Button
-        type="button"
-        variant="outline"
-        disabled={!prevEnabled || busy}
-        onClick={() => prev && onGoToStep(prev)}
-        className="border-gray-200 text-[#1f1f1f]"
-      >
-        <ArrowLeft className="w-4 h-4 mr-2 shrink-0" />
-        {prev ? `上一步：${WORKFLOW_STEP_LABELS[prev]}` : '上一步'}
-      </Button>
-      {primaryAction}
-      <Button
-        type="button"
-        variant="outline"
-        disabled={!nextEnabled || busy}
-        onClick={() => next && onGoToStep(next)}
-        className="border-gray-200 text-[#1f1f1f]"
-      >
-        {next ? `下一步：${WORKFLOW_STEP_LABELS[next]}` : '下一步'}
-        <ArrowRight className="w-4 h-4 ml-2 shrink-0" />
-      </Button>
+      <div className="inline-flex flex-wrap items-center gap-2 shrink-0">
+        <Button
+          type="button"
+          variant="outline"
+          disabled={!prevEnabled || busy}
+          onClick={() => prev && onGoToStep(prev)}
+          className="border-gray-200 text-[#1f1f1f]"
+        >
+          <ArrowLeft className="w-4 h-4 mr-2 shrink-0" />
+          {prev ? `上一步：${WORKFLOW_STEP_LABELS[prev]}` : '上一步'}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={!nextEnabled || busy}
+          onClick={() => next && onGoToStep(next)}
+          className="border-gray-200 text-[#1f1f1f]"
+        >
+          {next ? `下一步：${WORKFLOW_STEP_LABELS[next]}` : '下一步'}
+          <ArrowRight className="w-4 h-4 ml-2 shrink-0" />
+        </Button>
+      </div>
+      {primaryAction != null && (
+        <div className="flex flex-wrap items-center gap-2">{primaryAction}</div>
+      )}
     </div>
   );
 }

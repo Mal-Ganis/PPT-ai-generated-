@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.io.IOException;
 import java.util.Map;
@@ -49,6 +50,16 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(EntityNotFoundException.class)
     public ResponseEntity<Map<String, String>> notFound(EntityNotFoundException exception) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", exception.getMessage()));
+    }
+
+    /** Spring 6：无 Controller 匹配时（常见于后端未重启、接口未加载） */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Map<String, String>> noResourceFound(NoResourceFoundException exception) {
+        String path = exception.getResourcePath() != null ? exception.getResourcePath() : "";
+        String msg = path.contains("outline/regenerate")
+            ? "接口未加载：请停止并重新启动后端（在 backend 目录执行 mvn spring-boot:run），再试「重新生成大纲」。"
+            : "请求路径不存在：" + path;
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", msg));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

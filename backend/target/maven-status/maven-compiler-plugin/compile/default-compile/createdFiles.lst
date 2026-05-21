@@ -10,9 +10,11 @@ com\example\pptbackend\controller\EvaluationReportController.class
 com\example\pptbackend\dto\ExternalSourceLoadResponse.class
 com\example\pptbackend\dto\CreateEvaluationReportRequest.class
 com\example\pptbackend\dto\PptDisplayExtractionStatusDto$Phase.class
+com\example\pptbackend\dto\BatchDeleteProjectsRequest.class
 com\example\pptbackend\model\EvaluationReport.class
 com\example\pptbackend\repository\EvaluationReportRepository.class
 com\example\pptbackend\config\CorsConfig.class
+com\example\pptbackend\service\ProjectWorkflowStageService.class
 com\example\pptbackend\dto\ExternalSourceLoadRequest.class
 com\example\pptbackend\PptBackendApplication.class
 com\example\pptbackend\dto\SearchRequest.class
@@ -33,9 +35,11 @@ com\example\pptbackend\dto\ExternalSourceDocument.class
 com\example\pptbackend\service\PresentationDurationPlanner.class
 com\example\pptbackend\service\PptDisplayExtractionOrchestrator.class
 com\example\pptbackend\dto\IndexSegmentRequest.class
+com\example\pptbackend\service\ProjectWorkflowStageService$StageSnapshot.class
 com\example\pptbackend\service\ExternalKnowledgeSourceService$1.class
 com\example\pptbackend\service\SlideGenerationOrchestrator.class
 com\example\pptbackend\controller\IndexSegmentController.class
 com\example\pptbackend\service\IndexSegmentService.class
 com\example\pptbackend\service\PptDisplayExtractionService.class
+com\example\pptbackend\dto\RegenerateOutlineRequest.class
 com\example\pptbackend\service\ProjectService.class

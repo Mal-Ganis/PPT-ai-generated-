@@ -1,4 +1,6 @@
 import type { OutlineData, SlideData } from '../App';
+import { slidesHaveReadyPreview } from './pptExtraction';
+import { slidesHaveGeneratedContent } from './projectProgress';
 
 export type WorkflowStep = 'input' | 'outline' | 'content' | 'preview';
 
@@ -22,13 +24,19 @@ export function getWorkflowProgress(args: {
   projectId: number | null;
   outlineData: OutlineData | null;
   finalSlides: SlideData[] | null;
+  /** 为 true 时允许进入预览（由「完成编辑」或历史项目加载设置） */
+  previewUnlocked?: boolean;
 }): WorkflowProgress {
-  const hasContent = !!(args.finalSlides && args.finalSlides.length > 0);
+  const slides = args.finalSlides ?? [];
+  const hasScript = slides.length > 0 && slidesHaveGeneratedContent(slides);
+  const dataReady = slides.length > 0 && slidesHaveReadyPreview(slides);
   return {
     hasInput: args.projectId != null,
     hasOutline: !!args.outlineData,
-    hasContent,
-    hasPreview: hasContent,
+    /** 已生成过正文讲稿（大纲页「生成内容」之后） */
+    hasContent: hasScript,
+    /** 须在内容页完成编辑并提炼预览，或从历史加载已提炼项目 */
+    hasPreview: !!args.previewUnlocked && dataReady,
   };
 }
 

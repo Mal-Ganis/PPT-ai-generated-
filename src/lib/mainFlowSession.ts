@@ -1,4 +1,5 @@
 import type { AppStep, OutlineData, SlideData } from '../App';
+import type { WorkflowStep } from './workflowSteps';
 
 const STORAGE_KEY = 'ppt-main-flow-v1';
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -16,12 +17,14 @@ export interface MainFlowSession {
   inputData: MainFlowInputData | null;
   outlineData: OutlineData | null;
   finalSlides: SlideData[] | null;
+  /** 是否已解锁预览步骤（完成编辑提炼后） */
+  previewUnlocked?: boolean;
 }
 
-const WORKFLOW_STEPS: AppStep[] = ['input', 'outline', 'content', 'preview'];
+const WORKFLOW_STEPS: WorkflowStep[] = ['input', 'outline', 'content', 'preview'];
 
-export function isWorkflowStep(step: AppStep): boolean {
-  return WORKFLOW_STEPS.includes(step);
+export function isWorkflowStep(step: AppStep): step is WorkflowStep {
+  return WORKFLOW_STEPS.includes(step as WorkflowStep);
 }
 
 export function saveMainFlowSession(session: Omit<MainFlowSession, 'savedAt'>): void {
