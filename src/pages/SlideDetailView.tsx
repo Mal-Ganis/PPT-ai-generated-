@@ -5,6 +5,8 @@ import { FlowExitNav } from '@/components/FlowExitNav';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { citationAttentionSummary, editableTextToSources } from '@/lib/citationHints';
+import { isStructuralSlide } from '@/lib/structuralSlide';
 import { fetchProject, updateProjectSlide, type ProjectDetailResponse, type ProjectDetailSlide } from '@/lib/backend';
 import { toast } from 'sonner';
 
@@ -161,9 +163,28 @@ export default function SlideDetailView() {
 
               <div>
                 <label className="text-sm font-semibold text-[#1f1f1f]/70 mb-2 block">引用来源（可选）</label>
+                {!isStructuralSlide(slide.title, slide.chapter ?? undefined) &&
+                  (() => {
+                    const bulletLines = editBullets
+                      .split('\n')
+                      .map((l) => l.trim())
+                      .filter(Boolean);
+                    const summary = citationAttentionSummary(
+                      bulletLines,
+                      editableTextToSources(editSources),
+                    );
+                    return summary ? (
+                      <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+                        {summary}
+                      </div>
+                    ) : null;
+                  })()}
                 <p className="text-xs text-[#1f1f1f]/55 mb-2 leading-relaxed">
-                  用于记录本页要点所依据的出处：可与外部检索（Tavily / 维基）或向量索引命中片段对应，便于在预览、导出 Markdown
-                  或事实抽检时核对依据；每行一条链接或简短文献说明，不需要可留空。
+                  每行一条链接或文献说明；与讲稿中「[待核实]」要点尽量对应。可先
+                  <a href="/knowledge" className="text-[#3898ec] underline mx-0.5">
+                    知识检索
+                  </a>
+                  再粘贴。
                 </p>
                 <Textarea
                   value={editSources}

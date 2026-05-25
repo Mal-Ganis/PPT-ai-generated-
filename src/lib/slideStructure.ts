@@ -143,5 +143,20 @@ export async function persistSlideBullets(
     title: slide.title,
     bullets: slide.content,
     pptBullets: slide.pptContent?.length ? slide.pptContent : undefined,
+    sources: slide.sources,
+  });
+}
+
+export async function persistSlideSources(
+  projectId: number,
+  slide: SlideData,
+  sources: string[],
+): Promise<void> {
+  if (slide.slideId == null) return;
+  await updateProjectSlide(projectId, slide.slideId, {
+    title: slide.title,
+    bullets: slide.content,
+    sources,
+    pptBullets: slide.pptContent?.length ? slide.pptContent : undefined,
   });
 }

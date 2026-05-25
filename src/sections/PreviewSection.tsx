@@ -31,6 +31,14 @@ import {
   updateProjectSlide,
   type EvaluationReport,
 } from '@/lib/backend';
+import { SlideCitationEditor } from '@/components/SlideCitationEditor';
+import {
+  citationAttentionSummary,
+  indicesNeedingCitationAttention,
+  slideDataNeedsCitationAttention,
+} from '@/lib/citationHints';
+import { isStructuralSlideData } from '@/lib/structuralSlide';
+import { persistSlideSources } from '@/lib/slideStructure';
 import { bulletsToEditableText, editableTextToBullets } from '@/lib/bulletsText';
 import {
   bulletsEqual,
@@ -288,6 +296,7 @@ const PreviewSection = ({
     setCurrentSlideIndex((i) => Math.min(slides.length - 1, i + 1));
 
   const busy = isExtracting || isStructuring;
+  const citationPendingIndices = indicesNeedingCitationAttention(slides);
 
   const handleTitleBlur = async () => {
     if (!currentSlide || projectId == null) return;
@@ -475,6 +484,11 @@ const PreviewSection = ({
           <div className="flex items-center justify-between gap-4 mb-4 flex-wrap">
             <div className="flex-1 min-w-0">
               <p className="text-xs text-[#1f1f1f]/45 mb-1.5">拖拽 ≡ 或标题标签可调整顺序</p>
+              {citationPendingIndices.length > 0 && (
+                <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 mb-2">
+                  {citationPendingIndices.length} 页待补引用（封面/目录/Q&A 除外）· 琥珀色标签可点击
+                </p>
+              )}
               <SlideTitleSortList
                 slides={slides}
                 currentIndex={currentSlideIndex}
@@ -482,6 +496,7 @@ const PreviewSection = ({
                 onReorder={(from, to) => void handleReorderSlides(from, to)}
                 disabled={busy}
                 layout="horizontal"
+                needsCitationAttention={(_, index) => citationPendingIndices.includes(index)}
               />
             </div>
             <div className="flex items-center gap-2 shrink-0">
@@ -531,6 +546,13 @@ const PreviewSection = ({
                 <div className="flex flex-col gap-4 lg:min-h-[min(78vh,760px)]">
                   <div className="flex flex-col flex-[3] min-h-[220px] lg:min-h-[400px] bg-white rounded-2xl shadow-lg p-4">
                   <h2 className="text-sm font-semibold text-[#1f1f1f] mb-1">文稿内容</h2>
+                  {currentSlide &&
+                    slideDataNeedsCitationAttention(currentSlide) &&
+                    citationAttentionSummary(currentSlide.content, currentSlide.sources) && (
+                      <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 mb-2">
+                        {citationAttentionSummary(currentSlide.content, currentSlide.sources)}
+                      </p>
+                    )}
                   <p className="text-xs text-[#1f1f1f]/50 mb-2">
                     回车可换行；每行一条要点（保存时空行会自动忽略）
                   </p>
@@ -566,6 +588,21 @@ const PreviewSection = ({
                     disabled={busy}
                   />
                   </div>
+
+                  {currentSlide && !isStructuralSlideData(currentSlide) && (
+                    <SlideCitationEditor
+                      className="mt-0 pt-4 border-t border-gray-100"
+                      projectId={projectId!}
+                      slideId={currentSlide.slideId}
+                      content={currentSlide.content}
+                      sources={currentSlide.sources}
+                      disabled={busy}
+                      onSourcesChange={(sources) => updateSlideAt(currentSlideIndex, { sources })}
+                      onPersist={(sources) =>
+                        persistSlideSources(projectId!, currentSlide, sources)
+                      }
+                    />
+                  )}
                 </div>
               </div>
 

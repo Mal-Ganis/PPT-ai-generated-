@@ -9,10 +9,17 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { regenerateSlide } from '@/lib/backend';
 import { findSlideIndexByAnchor, reorderSlidesArray, slideAnchor } from '@/lib/slideOrder';
+import { SlideCitationEditor } from '@/components/SlideCitationEditor';
+import {
+  indicesNeedingCitationAttention,
+  slideDataNeedsCitationAttention,
+} from '@/lib/citationHints';
+import { isStructuralSlideData } from '@/lib/structuralSlide';
 import {
   addProjectSlide,
   deleteProjectSlide,
   persistSlideBullets,
+  persistSlideSources,
   persistSlideTitle,
   reorderProjectSlides,
 } from '@/lib/slideStructure';
@@ -247,6 +254,9 @@ const ContentSection = ({
   };
 
   const busy = isLoading || isStructuring;
+  const citationPendingIndices = indicesNeedingCitationAttention(slides);
+  const citationNeedsWork =
+    currentSlide != null && slideDataNeedsCitationAttention(currentSlide);
 
   if (!currentSlide) {
     return null;
@@ -297,6 +307,17 @@ const ContentSection = ({
             </div>
           )}
 
+          {citationNeedsWork && (
+            <div className="mb-6 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+              本页存在<strong className="font-semibold">待核实要点</strong>或
+              <strong className="font-semibold"> 占位引用</strong>，请滚动到下方「引用来源」编辑区补充（每行一条链接），或先
+              <a href="/knowledge" className="text-[#3898ec] underline mx-1">
+                知识检索
+              </a>
+              再粘贴。
+            </div>
+          )}
+
           <div className="flex gap-1 mb-8">
             {slides.map((_, index) => (
               <button
@@ -317,6 +338,11 @@ const ContentSection = ({
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-1 flex flex-col gap-2">
               <p className="text-xs text-[#1f1f1f]/45 px-1">拖拽 ≡ 调整页面顺序</p>
+              {citationPendingIndices.length > 0 && (
+                <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 leading-relaxed">
+                  共 {citationPendingIndices.length} 页待补引用（封面/目录/Q&A 不提示），琥珀色页请点击补充
+                </p>
+              )}
               <SlideTitleSortList
                 slides={slides}
                 currentIndex={currentSlideIndex}
@@ -324,6 +350,7 @@ const ContentSection = ({
                 onReorder={(from, to) => void handleReorderSlides(from, to)}
                 disabled={busy}
                 layout="vertical"
+                needsCitationAttention={(_, index) => citationPendingIndices.includes(index)}
               />
               <Button
                 type="button"
@@ -338,7 +365,11 @@ const ContentSection = ({
             </div>
 
             <div className="lg:col-span-2">
-              <div className="bg-white rounded-2xl shadow-lg p-6">
+              <div
+                className={`bg-white rounded-2xl shadow-lg p-6 ${
+                  citationNeedsWork ? 'ring-2 ring-amber-200 ring-offset-2' : ''
+                }`}
+              >
                 <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-4">
                   <div className="flex-1 min-w-0 space-y-2">
                     <label className="text-xs font-medium text-[#1f1f1f]/50">页面标题</label>
@@ -415,7 +446,15 @@ const ContentSection = ({
                             <span className="inline-block w-6 h-6 bg-[#3898ec]/10 text-[#3898ec] rounded-full text-xs font-medium flex items-center justify-center mb-2">
                               {index + 1}
                             </span>
-                            <p className="text-[#1f1f1f] leading-relaxed">{content}</p>
+                            <p className="text-[#1f1f1f] leading-relaxed">
+                              {content}
+                              {!isStructuralSlideData(currentSlide) &&
+                              /\[待核实\]|【待核实】|\[待补充权威来源\]/.test(content) ? (
+                                <span className="ml-2 text-xs font-medium text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">
+                                  待核实
+                                </span>
+                              ) : null}
+                            </p>
                           </div>
                           <div className="flex gap-1 shrink-0">
                             <button
@@ -453,15 +492,18 @@ const ContentSection = ({
                   添加要点
                 </Button>
 
-                {currentSlide.sources && currentSlide.sources.length > 0 && (
-                  <div className="mt-6 pt-6 border-t border-gray-200">
-                    <h4 className="text-sm font-medium text-[#1f1f1f]/60 mb-2">引用来源</h4>
-                    <ul className="text-sm text-[#1f1f1f]/80 space-y-1 list-disc pl-5">
-                      {currentSlide.sources.map((s, i) => (
-                        <li key={i}>{s}</li>
-                      ))}
-                    </ul>
-                  </div>
+                {!isStructuralSlideData(currentSlide) && (
+                  <SlideCitationEditor
+                    projectId={projectId}
+                    slideId={currentSlide.slideId}
+                    content={currentSlide.content}
+                    sources={currentSlide.sources}
+                    disabled={busy}
+                    onSourcesChange={(sources) => patchCurrentSlide({ sources })}
+                    onPersist={(sources) =>
+                      persistSlideSources(projectId, { ...currentSlide, sources }, sources)
+                    }
+                  />
                 )}
               </div>
 

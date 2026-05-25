@@ -3,6 +3,7 @@ package com.example.pptbackend.service;
 import com.example.pptbackend.dto.EvaluationReportResponse;
 import com.example.pptbackend.dto.ExternalSourceDocument;
 import com.example.pptbackend.dto.GenerateSlidesRequest;
+import com.example.pptbackend.dto.IndexSearchResult;
 import com.example.pptbackend.dto.SearchRequest;
 import com.example.pptbackend.dto.SearchResponse;
 import com.example.pptbackend.dto.SlideContentResponse;
@@ -59,9 +60,10 @@ public class SlideGenerationService {
     /** 与默认 slidePromptTemplate 配合；避免与模板中的叙事/禁止项重复，仅做 JSON 与检索提醒。 */
     private static final String SLIDE_QUALITY_RULES = """
 
-【系统提醒】下方若已含「检索上下文」段落，须优先用其中事实与数字；无命中时写常识并标 [待核实]。
+【系统提醒】下方若已含「检索上下文」，事实与数字须优先来自该段；无检索命中时在 content 中标注 [待核实]，勿编造 URL。
 【去重】须阅读「前面各页已生成的要点摘要」：禁止把已在前面出现过的公司/产品/大学案例再完整讲一遍；若必须呼应，用一句承接并给出**新增**信息。
-【格式】严格返回合法 JSON；content 至少 3 条；sources 至少 1 条；禁止 example.com 与占位假链；不要输出 notes 字段。
+【引用 sources】至少 1 条；须从「检索上下文」中抄写真实链接或文献标题，格式示例："标题 | https://..." 或 "https://..."。禁止 example.com、禁止占位假链、禁止输出未解析的 JSON 字符串；不要 notes 字段。
+【格式】严格返回合法 JSON：{"content":["…"],"sources":["…"]}
 """;
 
     private final ObjectMapper objectMapper;
@@ -72,8 +74,11 @@ public class SlideGenerationService {
     private final SlideRepository slideRepository;
     private final ProjectRepository projectRepository;
     private final ExternalKnowledgeSourceService externalKnowledgeSourceService;
+    private final SlideSourceCitationService slideSourceCitationService;
     private final EvaluationReportService evaluationReportService;
     private final TransactionTemplate transactionTemplate;
+
+    private record RagContextBundle(String promptBlock, List<String> citationLines) {}
 
     private final int slideMaxTokens;
     private final boolean slideFallbackTavily;
@@ -98,6 +103,7 @@ public class SlideGenerationService {
                                   SlideRepository slideRepository,
                                   ProjectRepository projectRepository,
                                   ExternalKnowledgeSourceService externalKnowledgeSourceService,
+                                  SlideSourceCitationService slideSourceCitationService,
                                   EvaluationReportService evaluationReportService,
                                   TransactionTemplate transactionTemplate,
                                   @Value("${generation.slide-max-tokens:1536}") int slideMaxTokens,
@@ -119,6 +125,7 @@ public class SlideGenerationService {
         this.slideRepository = slideRepository;
         this.projectRepository = projectRepository;
         this.externalKnowledgeSourceService = externalKnowledgeSourceService;
+        this.slideSourceCitationService = slideSourceCitationService;
         this.evaluationReportService = evaluationReportService;
         this.transactionTemplate = transactionTemplate;
         this.slideMaxTokens = Math.max(512, slideMaxTokens);
@@ -167,7 +174,8 @@ public class SlideGenerationService {
 
         SystemConfigDto config = systemConfigService.getSystemConfig();
         int topK = Math.min(Math.max(1, config.getRetrievalLimit()), slideRetrievalCap);
-        String ragContext = buildRagContext(projectId, slide.getTitle(), topK, tier);
+        RagContextBundle rag = buildRagContextBundle(projectId, slide.getTitle(), topK, tier);
+        String ragContext = rag.promptBlock();
 
         if (!projectRepository.existsById(projectId)) {
             throw new EntityNotFoundException("Project not found: " + projectId);
@@ -191,6 +199,11 @@ public class SlideGenerationService {
             : (ragContext.startsWith("【当前页外部简要依据】")
                 ? ragContext
                 : "【向量检索 ILF-2 / 须优先对齐的事实片段】\n" + ragContext);
+        if (!rag.citationLines().isEmpty()) {
+            retrievedContextBlock = retrievedContextBlock
+                + "\n\n【引用候选（请优先写入 sources，可择 1–3 条）】\n"
+                + String.join("\n", rag.citationLines());
+        }
 
         Map<String, String> vars = new HashMap<>();
         vars.put("slideTitle", slide.getTitle() != null ? slide.getTitle() : "");
@@ -218,7 +231,7 @@ public class SlideGenerationService {
         String responseText = deepseekChatClient.chatCompletions(body, Duration.ofSeconds(120));
         SlideContentResponse parsed = parseSlideResponse(responseText);
         parsed.setNotes("");
-        parsed.setSources(sanitizeSourcesList(parsed.getSources()));
+        parsed.setSources(slideSourceCitationService.mergeAndSanitize(parsed.getSources(), rag.citationLines()));
 
         slide.setBullets(parsed.getContent() != null ? parsed.getContent() : new ArrayList<>());
         slide.setPptBullets(new ArrayList<>());
@@ -417,7 +430,7 @@ public class SlideGenerationService {
         return fact != null && fact < factBelow;
     }
 
-    private String buildRagContext(Long projectId, String slideTitle, int topK, CorrectionTier tier) {
+    private RagContextBundle buildRagContextBundle(Long projectId, String slideTitle, int topK, CorrectionTier tier) {
         int base = topK > 0 ? topK : 5;
         int effective = Math.min(15, Math.max(1, base + tier.ragBoost));
         SearchRequest searchRequest = new SearchRequest();
@@ -425,10 +438,13 @@ public class SlideGenerationService {
         searchRequest.setQueryEmbedding(embeddingService.embed(slideTitle));
         searchRequest.setTopK(effective);
         SearchResponse response = indexSegmentService.search(searchRequest);
+
+        List<String> citationLines = new ArrayList<>();
         StringBuilder builder = new StringBuilder();
         if (response.getResults() != null && !response.getResults().isEmpty()) {
+            citationLines.addAll(slideSourceCitationService.linesFromIndexResults(response.getResults(), 3));
             int index = 1;
-            for (var result : response.getResults()) {
+            for (IndexSearchResult result : response.getResults()) {
                 builder.append(index++)
                     .append(". ")
                     .append(result.getContent() != null ? result.getContent().trim() : "")
@@ -438,17 +454,19 @@ public class SlideGenerationService {
             }
         }
         if (!builder.isEmpty()) {
-            return builder.toString().trim();
+            return new RagContextBundle(builder.toString().trim(), citationLines);
         }
-        // 大纲阶段权威片段改为事务提交后异步入向量库；此处为空时仍可用 Tavily 为正文提供检索上下文
         if (slideFallbackTavily && slideTitle != null && !slideTitle.isBlank()) {
             List<ExternalSourceDocument> docs =
-                externalKnowledgeSourceService.searchExternalSources(slideTitle, slideFallbackLimit);
+                externalKnowledgeSourceService.searchExternalSources(slideTitle, Math.max(slideFallbackLimit, 3));
             if (!docs.isEmpty()) {
-                return externalKnowledgeSourceService.formatDocumentsForSlidePrompt(docs, slideFallbackSnippetMaxChars);
+                citationLines.addAll(slideSourceCitationService.linesFromExternalDocuments(docs, 3));
+                return new RagContextBundle(
+                    externalKnowledgeSourceService.formatDocumentsForSlidePrompt(docs, slideFallbackSnippetMaxChars),
+                    citationLines);
             }
         }
-        return "";
+        return new RagContextBundle("", citationLines);
     }
 
     private String formatPrompt(String template, Map<String, String> variables) {
@@ -534,7 +552,11 @@ public class SlideGenerationService {
         response.setNotes("");
         Object sourcesValue = payload.get("sources");
         if (sourcesValue instanceof List<?> list) {
-            response.setSources(list.stream().map(SlideGenerationService::formatSourceEntry).collect(Collectors.toList()));
+            response.setSources(list.stream()
+                .map(SlideGenerationService::formatSourceEntryRaw)
+                .map(slideSourceCitationService::normalizeSourceLine)
+                .filter(s -> s != null && !s.isBlank())
+                .collect(Collectors.toList()));
         }
         return response;
     }
@@ -542,11 +564,13 @@ public class SlideGenerationService {
     /**
      * 支持字符串来源行，或 {"title","url","type"} 对象（与默认 Prompt 示例一致）。
      */
-    private static String formatSourceEntry(Object o) {
+    private static String formatSourceEntryRaw(Object o) {
         if (o instanceof Map<?, ?> map) {
-            Object title = map.get("title");
-            Object url = map.get("url");
-            Object type = map.get("type");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> typed = (Map<String, Object>) map;
+            Object title = typed.get("title");
+            Object url = typed.get("url");
+            Object type = typed.get("type");
             StringBuilder sb = new StringBuilder();
             if (title != null && !title.toString().isBlank()) {
                 sb.append(title.toString().trim());
@@ -559,49 +583,15 @@ public class SlideGenerationService {
             }
             if (type != null && !type.toString().isBlank()) {
                 if (sb.length() > 0) {
-                    sb.append(" | ");
+                    sb.append(" | type=");
+                } else {
+                    sb.append("type=");
                 }
                 sb.append(type.toString().trim());
             }
             return sb.length() > 0 ? sb.toString() : String.valueOf(o);
         }
         return o != null ? o.toString() : "";
-    }
-
-    private List<String> sanitizeSourcesList(List<String> sources) {
-        if (sources == null || sources.isEmpty()) {
-            List<String> fallback = new ArrayList<>();
-            fallback.add("常识归纳需人工核对来源 | type=llm_inference");
-            return fallback;
-        }
-        List<String> out = new ArrayList<>();
-        for (String s : sources) {
-            if (s == null || s.isBlank()) {
-                continue;
-            }
-            if (isBlockedOrHallucinatedSource(s)) {
-                continue;
-            }
-            out.add(s);
-        }
-        if (out.isEmpty()) {
-            out.add("已过滤不可验证链接；请以常识归纳并标 [待核实] | type=llm_inference");
-        }
-        return out;
-    }
-
-    private static boolean isBlockedOrHallucinatedSource(String line) {
-        String lower = line.toLowerCase();
-        if (lower.contains("example.com") || lower.contains("example.org")) {
-            return true;
-        }
-        if (lower.contains("localhost")) {
-            return true;
-        }
-        if (lower.contains("article/123456")) {
-            return true;
-        }
-        return lower.contains("placeholder");
     }
 
     private SlideContentResponse degradedSlide(String raw) {

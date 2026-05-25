@@ -1,5 +1,5 @@
 import { useState, type DragEvent } from 'react';
-import { GripVertical } from 'lucide-react';
+import { AlertCircle, GripVertical } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { SlideData } from '../App';
 
@@ -11,6 +11,8 @@ export interface SlideTitleSortListProps {
   disabled?: boolean;
   /** 侧栏竖排（内容页）或顶栏横排（预览页） */
   layout?: 'vertical' | 'horizontal';
+  /** 返回 true 时在侧栏标题旁标「待补引用」 */
+  needsCitationAttention?: (slide: SlideData, index: number) => boolean;
 }
 
 /**
@@ -23,6 +25,7 @@ export function SlideTitleSortList({
   onReorder,
   disabled = false,
   layout = 'vertical',
+  needsCitationAttention,
 }: SlideTitleSortListProps) {
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [dropTarget, setDropTarget] = useState<number | null>(null);
@@ -61,6 +64,7 @@ export function SlideTitleSortList({
       {slides.map((slide, index) => {
         const isActive = index === currentIndex;
         const isDropHint = dropTarget === index && dragFrom != null && dragFrom !== index;
+        const needsCitation = needsCitationAttention?.(slide, index) ?? false;
 
         return (
           <div
@@ -117,13 +121,17 @@ export function SlideTitleSortList({
                       'flex-1 p-4 rounded-xl',
                       isActive
                         ? 'bg-[#3898ec] text-white shadow-lg'
-                        : 'bg-white hover:bg-gray-50 text-[#1f1f1f]',
+                        : needsCitation
+                          ? 'bg-amber-50 hover:bg-amber-100/80 text-[#1f1f1f] border border-amber-200'
+                          : 'bg-white hover:bg-gray-50 text-[#1f1f1f]',
                     )
                   : cn(
                       'px-3 py-1.5 rounded-lg text-sm',
                       isActive
                         ? 'bg-[#3898ec] text-white'
-                        : 'bg-white text-[#1f1f1f]/70 hover:bg-gray-50',
+                        : needsCitation
+                          ? 'bg-amber-50 text-amber-950 border border-amber-200 hover:bg-amber-100/80'
+                          : 'bg-white text-[#1f1f1f]/70 hover:bg-gray-50',
                     ),
               )}
             >
@@ -137,11 +145,23 @@ export function SlideTitleSortList({
                   >
                     {index + 1}
                   </span>
-                  <span className="font-medium truncate">{slide.title}</span>
+                  <span className="font-medium truncate flex-1 min-w-0">{slide.title}</span>
+                  {needsCitation && !isActive && (
+                    <span
+                      className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-medium text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded-full"
+                      title="待补充引用或核实要点"
+                    >
+                      <AlertCircle className="w-3 h-3" />
+                      待补引用
+                    </span>
+                  )}
                 </div>
               ) : (
-                <span className="whitespace-nowrap">
+                <span className="whitespace-nowrap inline-flex items-center gap-1">
                   {index + 1}. {slide.title}
+                  {needsCitation && (
+                    <AlertCircle className="w-3.5 h-3.5 text-amber-600" aria-label="待补引用" />
+                  )}
                 </span>
               )}
             </button>
