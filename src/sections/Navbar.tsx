@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Menu, X, FileText, RotateCcw, Settings } from 'lucide-react';
+import { Menu, X, FileText, RotateCcw, Settings, LogOut, User } from 'lucide-react';
 import type { AppStep } from '../App';
 import { canGoToWorkflowStep, type WorkflowProgress, type WorkflowStep } from '@/lib/workflowSteps';
 
@@ -9,9 +9,23 @@ interface NavbarProps {
   onNavigate: (step: AppStep) => void;
   onReset: () => void;
   onOpenConfig: () => void;
+  userDisplayName?: string;
+  userRoleLabel?: string;
+  canManageConfig?: boolean;
+  onLogout?: () => void;
 }
 
-const Navbar = ({ currentStep, workflowProgress, onNavigate, onReset, onOpenConfig }: NavbarProps) => {
+const Navbar = ({
+  currentStep,
+  workflowProgress,
+  onNavigate,
+  onReset,
+  onOpenConfig,
+  userDisplayName,
+  userRoleLabel,
+  canManageConfig = false,
+  onLogout,
+}: NavbarProps) => {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
@@ -137,13 +151,37 @@ const Navbar = ({ currentStep, workflowProgress, onNavigate, onReset, onOpenConf
 
             {/* Actions */}
             <div className="flex items-center gap-2">
-              <button
-                onClick={onOpenConfig}
-                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-sm text-[#1f1f1f]/60 hover:text-[#3898ec] transition-colors"
-              >
-                <Settings className="w-4 h-4" />
-                系统配置
-              </button>
+              {canManageConfig && (
+                <button
+                  onClick={onOpenConfig}
+                  className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-sm text-[#1f1f1f]/60 hover:text-[#3898ec] transition-colors"
+                >
+                  <Settings className="w-4 h-4" />
+                  系统配置
+                </button>
+              )}
+              {userDisplayName && (
+                <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full bg-gray-100 text-sm text-[#1f1f1f]/70">
+                  <User className="w-4 h-4 text-[#3898ec]" />
+                  <span className="max-w-[8rem] truncate">{userDisplayName}</span>
+                  {userRoleLabel && (
+                    <span className="text-xs px-1.5 py-0.5 rounded-full bg-[#3898ec]/10 text-[#3898ec]">
+                      {userRoleLabel}
+                    </span>
+                  )}
+                </div>
+              )}
+              {onLogout && (
+                <button
+                  type="button"
+                  onClick={onLogout}
+                  className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-sm text-[#1f1f1f]/60 hover:text-[#e92222] transition-colors"
+                  title="退出登录"
+                >
+                  <LogOut className="w-4 h-4" />
+                  退出
+                </button>
+              )}
               {isInWorkflow && (
                 <button
                   onClick={() => {

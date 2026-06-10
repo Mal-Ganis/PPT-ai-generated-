@@ -38,6 +38,8 @@ import {
   slideDataNeedsCitationAttention,
 } from '@/lib/citationHints';
 import { isStructuralSlideData } from '@/lib/structuralSlide';
+import { stripVerificationMarks } from '@/lib/citationFormat';
+import { consumeCitationReturnContext } from '@/lib/citationReturnContext';
 import { persistSlideSources } from '@/lib/slideStructure';
 import { bulletsToEditableText, editableTextToBullets } from '@/lib/bulletsText';
 import {
@@ -77,6 +79,15 @@ const PreviewSection = ({
 }: PreviewSectionProps) => {
   const [slides, setSlides] = useState<SlideData[]>(initialSlides);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
+
+  useEffect(() => {
+    if (projectId == null || slides.length === 0) return;
+    const ctx = consumeCitationReturnContext();
+    if (!ctx || ctx.projectId !== projectId || ctx.step !== 'preview') return;
+    if (ctx.slideIndex >= 0 && ctx.slideIndex < slides.length) {
+      setCurrentSlideIndex(ctx.slideIndex);
+    }
+  }, [projectId, slides.length]);
   const [latestEval, setLatestEval] = useState<EvaluationReport | null>(null);
   const [extractMessage, setExtractMessage] = useState('');
   const [isExtracting, setIsExtracting] = useState(false);
@@ -594,6 +605,10 @@ const PreviewSection = ({
                       className="mt-0 pt-4 border-t border-gray-100"
                       projectId={projectId!}
                       slideId={currentSlide.slideId}
+                      slideTitle={currentSlide.title}
+                      slideIndex={currentSlideIndex}
+                      flowStep="preview"
+                      deckTheme={deckTheme}
                       content={currentSlide.content}
                       sources={currentSlide.sources}
                       disabled={busy}
@@ -601,6 +616,24 @@ const PreviewSection = ({
                       onPersist={(sources) =>
                         persistSlideSources(projectId!, currentSlide, sources)
                       }
+                      onVerifyBullet={(bulletIndex) => {
+                        const nextContent = [...currentSlide.content];
+                        nextContent[bulletIndex] = stripVerificationMarks(nextContent[bulletIndex]);
+                        updateSlideAt(currentSlideIndex, { content: nextContent });
+                      }}
+                      onRegenerated={(patch) => {
+                        updateSlideAt(currentSlideIndex, patch);
+                        setScriptDraft(patch.content.join('\n'));
+                        setPptDraft(patch.pptContent.join('\n'));
+                        if (projectId != null && currentSlide.slideId != null) {
+                          void updateProjectSlide(projectId, currentSlide.slideId, {
+                            title: currentSlide.title,
+                            bullets: patch.content,
+                            pptBullets: patch.pptContent,
+                            sources: patch.sources,
+                          });
+                        }
+                      }}
                     />
                   )}
                 </div>

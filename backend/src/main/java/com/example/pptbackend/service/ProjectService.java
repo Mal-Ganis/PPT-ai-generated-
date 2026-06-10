@@ -48,6 +48,9 @@ public class ProjectService {
     private final ExternalKnowledgeSourceService externalKnowledgeSourceService;
     private final DeferredProjectExternalIndexService deferredProjectExternalIndexService;
     private final IndexSegmentService indexSegmentService;
+    private final ProjectAccessService projectAccessService;
+    private final CurrentUserService currentUserService;
+    private final SlideSourceCitationService slideSourceCitationService;
 
     @Value("${outline.use-external-retrieval:true}")
     private boolean outlineUseExternalRetrieval;
@@ -67,7 +70,10 @@ public class ProjectService {
                           OutlineGenerationService outlineGenerationService,
                           ExternalKnowledgeSourceService externalKnowledgeSourceService,
                           DeferredProjectExternalIndexService deferredProjectExternalIndexService,
-                          IndexSegmentService indexSegmentService) {
+                          IndexSegmentService indexSegmentService,
+                          ProjectAccessService projectAccessService,
+                          CurrentUserService currentUserService,
+                          SlideSourceCitationService slideSourceCitationService) {
         this.projectRepository = projectRepository;
         this.slideRepository = slideRepository;
         this.evaluationReportRepository = evaluationReportRepository;
@@ -78,6 +84,9 @@ public class ProjectService {
         this.externalKnowledgeSourceService = externalKnowledgeSourceService;
         this.deferredProjectExternalIndexService = deferredProjectExternalIndexService;
         this.indexSegmentService = indexSegmentService;
+        this.projectAccessService = projectAccessService;
+        this.currentUserService = currentUserService;
+        this.slideSourceCitationService = slideSourceCitationService;
     }
 
     @Transactional
@@ -131,6 +140,7 @@ public class ProjectService {
         Project project = new Project();
         project.setTitle(request.getTitle());
         project.setTheme(request.getTheme() != null ? request.getTheme() : request.getTitle());
+        projectAccessService.assignOwnerOnCreate(project);
         applySlides(project, request.getSlides());
         return projectRepository.save(project).getId();
     }
@@ -146,13 +156,14 @@ public class ProjectService {
         project.setTitle(title);
         project.setTheme(theme != null ? theme : title);
         project.setPresentationDurationMinutes(PresentationDurationPlanner.clampMinutes(presentationDurationMinutes));
+        projectAccessService.assignOwnerOnCreate(project);
         return projectRepository.save(project).getId();
     }
 
     @Transactional
     public void replaceOutline(Long projectId, CreateProjectRequest request) {
-        Project project = projectRepository.findById(projectId)
-            .orElseThrow(() -> new EntityNotFoundException("Project not found: " + projectId));
+        Project project = projectAccessService.requireReadableProject(projectId);
+        projectAccessService.assertWritable(project);
         if (request.getTitle() != null) {
             project.setTitle(request.getTitle());
         }
@@ -168,8 +179,8 @@ public class ProjectService {
      */
     @Transactional
     public ProjectOutlineResponse regenerateOutline(Long projectId, RegenerateOutlineRequest request) {
-        Project project = projectRepository.findById(projectId)
-            .orElseThrow(() -> new EntityNotFoundException("Project not found: " + projectId));
+        Project project = projectAccessService.requireReadableProject(projectId);
+        projectAccessService.assertWritable(project);
 
         String cleanTopic = request != null && request.getTopic() != null && !request.getTopic().isBlank()
             ? request.getTopic().trim()
@@ -250,6 +261,8 @@ public class ProjectService {
      */
     @Transactional
     public ProjectDetailResponse updateSlide(Long projectId, Long slideId, UpdateSlideRequest request) {
+        Project project = projectAccessService.requireReadableProject(projectId);
+        projectAccessService.assertWritable(project);
         Slide slide = slideRepository.findByIdAndProject_Id(slideId, projectId)
             .orElseThrow(() -> new EntityNotFoundException("Slide not found: " + slideId));
 
@@ -354,7 +367,14 @@ public class ProjectService {
 
     @Transactional(readOnly = true)
     public List<ProjectSummaryDto> listProjects() {
-        List<Project> projects = projectRepository.findAll(Sort.by(Sort.Direction.DESC, "updatedAt"));
+        Sort sort = Sort.by(Sort.Direction.DESC, "updatedAt");
+        List<Project> projects;
+        if (currentUserService.isAdmin()) {
+            projects = projectRepository.findAll(sort);
+        } else {
+            Long userId = currentUserService.requireAuthenticated().getId();
+            projects = projectRepository.findByOwnerUserIdOrOwnerUserIdIsNull(userId, sort);
+        }
         if (projects.isEmpty()) {
             return List.of();
         }
@@ -399,9 +419,9 @@ public class ProjectService {
             throw new IllegalArgumentException("projectIds is required");
         }
         for (Long id : ids) {
-            if (!projectRepository.existsById(id)) {
-                throw new EntityNotFoundException("Project not found: " + id);
-            }
+            Project project = projectRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Project not found: " + id));
+            projectAccessService.assertDeletable(project);
         }
         for (Long id : ids) {
             evaluationReportRepository.deleteByProjectId(id);
@@ -419,8 +439,7 @@ public class ProjectService {
 
     @Transactional(readOnly = true)
     public ProjectDetailResponse getProjectById(Long id, boolean includeEvaluations) {
-        Project project = projectRepository.findById(id)
-            .orElseThrow(() -> new EntityNotFoundException("Project not found: " + id));
+        Project project = projectAccessService.requireReadableProject(id);
 
         ProjectDetailResponse response = new ProjectDetailResponse();
         response.setId(project.getId());
@@ -490,7 +509,7 @@ public class ProjectService {
         item.setBody(slide.getBody());
         item.setBullets(slide.getBullets());
         item.setPptBullets(slide.getPptBullets());
-        item.setSources(slide.getSources());
+        item.setSources(slideSourceCitationService.formatSourceLinesForStorage(slide.getSources()));
         item.setNotes(slide.getNotes());
         return item;
     }

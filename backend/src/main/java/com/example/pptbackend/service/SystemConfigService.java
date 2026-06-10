@@ -185,8 +185,8 @@ public class SystemConfigService {
     "（可选）行动建议"
   ],
   "sources": [
-    "字符串或对象均可；url 必须来自上方检索块中已出现的真实链接；若无链接可写「常识归纳 | type=llm_inference」",
-    "{\"title\":\"来源标题\",\"url\":\"https://…\",\"type\":\"tavily\"}"
+    "来源标题 | https://真实链接 | type=tavily",
+    "常识归纳 | type=llm_inference"
   ]
 }
 

@@ -24,6 +24,18 @@ management:
 server:
   port: 8080
 
+app:
+  jwt:
+    secret: ${JWT_SECRET:ppt-ai-dev-secret-change-in-production-min-32-chars!!}
+    expiration-ms: ${JWT_EXPIRATION_MS:86400000}
+  auth:
+    default-admin-username: ${DEFAULT_ADMIN_USERNAME:admin}
+    default-admin-password: ${DEFAULT_ADMIN_PASSWORD:admin123}
+    default-editor-username: ${DEFAULT_EDITOR_USERNAME:editor}
+    default-editor-password: ${DEFAULT_EDITOR_PASSWORD:editor123}
+    default-viewer-username: ${DEFAULT_VIEWER_USERNAME:viewer}
+    default-viewer-password: ${DEFAULT_VIEWER_PASSWORD:viewer123}
+
 # 外部检索与向量 API（密钥请用环境变量或本机 application-local.yml，勿提交仓库）
 # DEEPSEEK_API_KEY：大纲与幻灯片生成（必填）
 # TAVILY_API_KEY / SILICONFLOW_API_KEY：检索与语义事实率（可选，未配则降级）

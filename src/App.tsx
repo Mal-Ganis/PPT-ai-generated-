@@ -14,6 +14,10 @@ import ProjectsSection from './sections/ProjectsSection';
 import Footer from './sections/Footer';
 import SlideDetailView from './pages/SlideDetailView';
 import KnowledgeSearchPage from './pages/KnowledgeSearchPage';
+import LoginPage from './pages/LoginPage';
+import { ProtectedRoute } from './components/ProtectedRoute';
+import { useAuth } from './contexts/AuthContext';
+import { ROLE_LABELS } from './lib/permissions';
 import {
   createProjectFromTopic,
   createProjectFromDocument,
@@ -97,12 +101,14 @@ function mapOutlineResponse(outline: ProjectOutlineResponse): OutlineData {
 
 function ProjectsPage() {
   const navigate = useNavigate();
+  const { canWrite } = useAuth();
   return (
     <div className="min-h-screen bg-[#f3f3f3]">
       <ProjectsSection
         onOpenProject={(id, step) =>
           navigate('/', { state: { openProjectId: id, openProjectStep: step } })
         }
+        canDelete={canWrite}
       />
     </div>
   );
@@ -111,6 +117,7 @@ function ProjectsPage() {
 export function MainFlow() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { user, canWrite, canConfig, logout } = useAuth();
   const resumeSessionOnMount = getResumeSessionFromLocationState(location.state);
   const [currentStep, setCurrentStep] = useState<AppStep>(() =>
     resumeSessionOnMount && isWorkflowStep(resumeSessionOnMount.currentStep)
@@ -148,6 +155,10 @@ export function MainFlow() {
   }, []);
 
   const handleStart = () => {
+    if (!canWrite) {
+      toast.error('只读账号无法创建新项目，请从「历史项目」查看已有内容');
+      return;
+    }
     setCurrentStep('input');
   };
 
@@ -360,6 +371,10 @@ export function MainFlow() {
   };
 
   const handleShowConfig = () => {
+    if (!canConfig) {
+      toast.error('仅管理员可修改系统配置');
+      return;
+    }
     setCurrentStep('config');
   };
 
@@ -521,6 +536,9 @@ export function MainFlow() {
     if (st?.resumeMainFlow != null) {
       sessionHydratedRef.current = true;
       const session = loadMainFlowSession();
+      if (session) {
+        applyMainFlowSession(session);
+      }
       let cancelled = false;
       void (async () => {
         if (session?.projectId) {
@@ -585,6 +603,13 @@ export function MainFlow() {
         onNavigate={handleNavbarNavigate}
         onReset={handleReset}
         onOpenConfig={handleShowConfig}
+        userDisplayName={user?.displayName}
+        userRoleLabel={user ? ROLE_LABELS[user.role] : undefined}
+        canManageConfig={canConfig}
+        onLogout={() => {
+          logout();
+          navigate('/login');
+        }}
       />
 
       {currentStep === 'home' && (
@@ -593,6 +618,8 @@ export function MainFlow() {
           onShowEvaluations={handleShowEvaluations}
           onShowConfig={handleShowConfig}
           onShowProjects={handleShowProjects}
+          canWrite={canWrite}
+          canManageConfig={canConfig}
         />
       )}
 
@@ -664,7 +691,7 @@ export function MainFlow() {
       )}
 
       {currentStep === 'projects' && (
-        <ProjectsSection onOpenProject={handleOpenProject} />
+        <ProjectsSection onOpenProject={handleOpenProject} canDelete={canWrite} />
       )}
 
       {currentStep === 'home' && <Footer />}
@@ -677,10 +704,39 @@ export default function App() {
     <BrowserRouter>
       <Toaster position="top-center" richColors />
       <Routes>
-        <Route path="/" element={<MainFlow />} />
-        <Route path="/projects" element={<ProjectsPage />} />
-        <Route path="/knowledge" element={<KnowledgeSearchPage />} />
-        <Route path="/project/:projectId/slide/:slideId" element={<SlideDetailView />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <MainFlow />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects"
+          element={
+            <ProtectedRoute>
+              <ProjectsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/knowledge"
+          element={
+            <ProtectedRoute>
+              <KnowledgeSearchPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/project/:projectId/slide/:slideId"
+          element={
+            <ProtectedRoute roles={['ADMIN', 'EDITOR']}>
+              <SlideDetailView />
+            </ProtectedRoute>
+          }
+        />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

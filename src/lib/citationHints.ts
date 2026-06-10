@@ -1,4 +1,5 @@
 import type { SlideData } from '../App';
+import { normalizeSourceLines } from './citationFormat';
 import { isStructuralSlideData } from './structuralSlide';
 
 /** 与后端 SlideSourceCitationService 兜底文案、Prompt 占位保持一致 */
@@ -75,12 +76,26 @@ export function citationAttentionSummary(content: string[], sources?: string[]):
 }
 
 export function sourcesToEditableText(sources: string[]): string {
-  return (sources ?? []).filter((s) => s?.trim()).join('\n');
+  return normalizeSourceLines(sources ?? []).join('\n');
 }
 
 export function editableTextToSources(text: string): string[] {
-  return text
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean);
+  return normalizeSourceLines(
+    text
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean),
+  );
+}
+
+/** 是否已有足够有效的引用，可触发「按引用重生」 */
+export function sourcesReadyForRegeneration(sources?: string[]): boolean {
+  const list = sources ?? [];
+  if (list.length === 0) return false;
+  if (list.every(isPlaceholderSourceLine)) return false;
+  return list.some(
+    (s) =>
+      !isPlaceholderSourceLine(s) &&
+      (/https?:\/\//i.test(s) || /type=(tavily|mediawiki|index)/i.test(s)),
+  );
 }

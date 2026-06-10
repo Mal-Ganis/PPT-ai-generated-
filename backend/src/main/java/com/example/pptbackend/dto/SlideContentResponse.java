@@ -8,6 +8,8 @@ public class SlideContentResponse {
     private List<String> content = new ArrayList<>();
     private String notes = "";
     private List<String> sources = new ArrayList<>();
+    /** 由讲稿提炼的 PPT 投影要点 */
+    private List<String> pptBullets = new ArrayList<>();
 
     public List<String> getContent() {
         return content;
@@ -31,5 +33,13 @@ public class SlideContentResponse {
 
     public void setSources(List<String> sources) {
         this.sources = sources;
+    }
+
+    public List<String> getPptBullets() {
+        return pptBullets;
+    }
+
+    public void setPptBullets(List<String> pptBullets) {
+        this.pptBullets = pptBullets;
     }
 }

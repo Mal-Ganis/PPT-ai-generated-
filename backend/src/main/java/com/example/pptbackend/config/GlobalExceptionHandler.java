@@ -12,6 +12,9 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.core.AuthenticationException;
 
 import java.io.IOException;
 import java.util.Map;
@@ -50,6 +53,20 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(EntityNotFoundException.class)
     public ResponseEntity<Map<String, String>> notFound(EntityNotFoundException exception) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", exception.getMessage()));
+    }
+
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<Map<String, String>> accessDenied(AccessDeniedException exception) {
+        String msg = exception.getMessage() != null ? exception.getMessage() : "无权执行此操作";
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", msg));
+    }
+
+    @ExceptionHandler(AuthenticationException.class)
+    public ResponseEntity<Map<String, String>> authenticationFailed(AuthenticationException exception) {
+        String msg = exception instanceof BadCredentialsException
+            ? "用户名或密码错误"
+            : (exception.getMessage() != null ? exception.getMessage() : "认证失败");
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("message", msg));
     }
 
     /** Spring 6：无 Controller 匹配时（常见于后端未重启、接口未加载） */

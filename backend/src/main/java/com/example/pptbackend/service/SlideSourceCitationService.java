@@ -132,6 +132,27 @@ public class SlideSourceCitationService {
         return null;
     }
 
+    /**
+     * 将用户/模型来源行转为可读格式（如 JSON 对象串 → 「标题 | URL | type=…」），不过滤占位说明。
+     */
+    public List<String> formatSourceLinesForStorage(List<String> raw) {
+        if (raw == null || raw.isEmpty()) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
+        for (String line : raw) {
+            String normalized = normalizeSourceLine(line);
+            if (normalized == null || normalized.isBlank()) {
+                continue;
+            }
+            if (seen.add(normalized)) {
+                out.add(normalized);
+            }
+        }
+        return out;
+    }
+
     private List<String> normalizeLines(List<String> raw) {
         if (raw == null || raw.isEmpty()) {
             return List.of();

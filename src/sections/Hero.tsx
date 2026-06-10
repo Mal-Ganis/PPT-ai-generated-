@@ -19,9 +19,18 @@ interface HeroProps {
   onShowEvaluations: () => void;
   onShowConfig: () => void;
   onShowProjects: () => void;
+  canWrite?: boolean;
+  canManageConfig?: boolean;
 }
 
-const Hero = ({ onStart, onShowEvaluations, onShowConfig, onShowProjects }: HeroProps) => {
+const Hero = ({
+  onStart,
+  onShowEvaluations,
+  onShowConfig,
+  onShowProjects,
+  canWrite = true,
+  canManageConfig = false,
+}: HeroProps) => {
   const heroRef = useRef<HTMLDivElement>(null);
   const [stats, setStats] = useState({
     projectCount: '—',
@@ -169,12 +178,14 @@ const Hero = ({ onStart, onShowEvaluations, onShowConfig, onShowProjects }: Hero
           <div className="hero-buttons flex flex-col sm:flex-row items-center justify-center gap-4 animate-scale-in" style={{ animationDelay: '1200ms' }}>
             <Button
               size="lg"
-              className="btn-magnetic bg-[#3898ec] hover:bg-[#0082f3] text-white px-8 py-6 text-base font-semibold rounded-xl shadow-lg shadow-[#3898ec]/30"
+              className="btn-magnetic bg-[#3898ec] hover:bg-[#0082f3] text-white px-8 py-6 text-base font-semibold rounded-xl shadow-lg shadow-[#3898ec]/30 disabled:opacity-60"
               onClick={onStart}
+              disabled={!canWrite}
+              title={canWrite ? undefined : '只读账号无法创建新项目'}
             >
               <FileText className="w-5 h-5 mr-2" />
-              开始体验
-              <ArrowRight className="w-5 h-5 ml-2" />
+              {canWrite ? '开始体验' : '只读模式'}
+              {canWrite && <ArrowRight className="w-5 h-5 ml-2" />}
             </Button>
             <Button size="lg" variant="outline" className="btn-magnetic inline-flex items-center gap-2 px-8 py-6 rounded-xl border-gray-200 text-[#1f1f1f] hover:bg-gray-100" asChild>
               <Link to="/knowledge">
@@ -200,15 +211,17 @@ const Hero = ({ onStart, onShowEvaluations, onShowConfig, onShowProjects }: Hero
               <FileText className="w-5 h-5" />
               评估报告
             </Button>
-            <Button
-              size="lg"
-              variant="outline"
-              className="btn-magnetic inline-flex items-center gap-2 px-8 py-6 rounded-xl border-gray-200 text-[#1f1f1f] hover:bg-gray-100"
-              onClick={onShowConfig}
-            >
-              <Settings className="w-5 h-5" />
-              系统配置
-            </Button>
+            {canManageConfig && (
+              <Button
+                size="lg"
+                variant="outline"
+                className="btn-magnetic inline-flex items-center gap-2 px-8 py-6 rounded-xl border-gray-200 text-[#1f1f1f] hover:bg-gray-100"
+                onClick={onShowConfig}
+              >
+                <Settings className="w-5 h-5" />
+                系统配置
+              </Button>
+            )}
           </div>
 
           {/* Stats preview */}

@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { toast } from 'sonner';
+import { clearAuthSession, getAuthToken } from './authStorage';
 
 /**
  * VITE_API_BASE 应为「协议 + 主机 + 端口」，不要带 `/api`。
@@ -46,17 +47,67 @@ const backendApi = axios.create({
   timeout: DEFAULT_AXIOS_TIMEOUT_MS,
 });
 
+backendApi.interceptors.request.use((config) => {
+  const token = getAuthToken();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
 backendApi.interceptors.response.use(
   (r) => r,
   (err: unknown) => {
-    const ax = err as { response?: { status?: number } };
+    const ax = err as { response?: { status?: number; config?: { url?: string } } };
     const msg = extractAxiosErrorMessage(err);
+    const url = ax.response?.config?.url ?? '';
+    if (ax.response?.status === 401 && !url.includes('/api/auth/login')) {
+      clearAuthSession();
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
+    }
     if (ax.response) {
       toast.error(msg);
     }
     return Promise.reject(err);
   },
 );
+
+export interface AuthUserProfile {
+  id: number;
+  username: string;
+  displayName: string;
+  role: string;
+}
+
+export interface AuthSessionResponse {
+  token: string;
+  user: AuthUserProfile;
+}
+
+export async function login(username: string, password: string): Promise<AuthSessionResponse> {
+  const { data } = await backendApi.post<AuthSessionResponse>('/api/auth/login', { username, password });
+  return data;
+}
+
+export async function register(
+  username: string,
+  password: string,
+  displayName?: string,
+): Promise<AuthSessionResponse> {
+  const { data } = await backendApi.post<AuthSessionResponse>('/api/auth/register', {
+    username,
+    password,
+    displayName,
+  });
+  return data;
+}
+
+export async function fetchCurrentUser(): Promise<AuthUserProfile> {
+  const { data } = await backendApi.get<AuthUserProfile>('/api/auth/me');
+  return data;
+}
 
 export interface EvaluationReport {
   id: number;
@@ -182,6 +233,14 @@ export interface SlideContentResponse {
   content: string[];
   notes?: string;
   sources?: string[];
+  pptBullets?: string[];
+}
+
+export interface RegenerateFromSourcesPayload {
+  title?: string;
+  sources: string[];
+  inputContent?: string;
+  previousContent?: string[];
 }
 
 export interface IndexSearchResult {
@@ -512,6 +571,20 @@ export const regenerateSlide = async (
 ): Promise<SlideContentResponse> => {
   const response = await backendApi.post<SlideContentResponse>(
     `/api/projects/${projectId}/slides/${slideId}/regenerate`,
+    payload,
+    { timeout: SLIDE_PIPELINE_AXIOS_TIMEOUT_MS },
+  );
+  return response.data;
+};
+
+/** 按用户确认的引用重新生成本页讲稿 + PPT 投影要点（sources 保持不变） */
+export const regenerateSlideFromSources = async (
+  projectId: number,
+  slideId: number,
+  payload: RegenerateFromSourcesPayload,
+): Promise<SlideContentResponse> => {
+  const response = await backendApi.post<SlideContentResponse>(
+    `/api/projects/${projectId}/slides/${slideId}/regenerate-from-sources`,
     payload,
     { timeout: SLIDE_PIPELINE_AXIOS_TIMEOUT_MS },
   );

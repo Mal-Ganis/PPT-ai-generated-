@@ -23,6 +23,7 @@ import type { WorkflowStep } from '@/lib/workflowSteps';
 
 interface ProjectsSectionProps {
   onOpenProject: (projectId: number, step?: WorkflowStep) => void;
+  canDelete?: boolean;
 }
 
 type DeleteDialogMode = { kind: 'single'; project: ProjectSummary } | { kind: 'batch'; ids: number[] };
@@ -34,7 +35,7 @@ function summaryMeta(p: ProjectSummary) {
   return { hasScript, hasPpt, stage };
 }
 
-const ProjectsSection = ({ onOpenProject }: ProjectsSectionProps) => {
+const ProjectsSection = ({ onOpenProject, canDelete = true }: ProjectsSectionProps) => {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -186,29 +187,33 @@ const ProjectsSection = ({ onOpenProject }: ProjectsSectionProps) => {
             {!loading && projects.length > 0 && (
               <>
                 <div className="flex flex-wrap items-center gap-3 mb-4 pb-4 border-b border-gray-100">
-                  <label className="flex items-center gap-2 text-sm text-[#1f1f1f]/70 cursor-pointer select-none">
-                    <Checkbox
-                      checked={allSelected ? true : someSelected ? 'indeterminate' : false}
-                      onCheckedChange={(v) => toggleSelectAll(v === true)}
-                    />
-                    全选
-                  </label>
-                  {someSelected && (
+                  {canDelete && (
+                    <label className="flex items-center gap-2 text-sm text-[#1f1f1f]/70 cursor-pointer select-none">
+                      <Checkbox
+                        checked={allSelected ? true : someSelected ? 'indeterminate' : false}
+                        onCheckedChange={(v) => toggleSelectAll(v === true)}
+                      />
+                      全选
+                    </label>
+                  )}
+                  {canDelete && someSelected && (
                     <span className="text-sm text-[#1f1f1f]/50">已选 {selectedIds.size} 项</span>
                   )}
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="ml-auto border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 disabled:opacity-40"
-                    disabled={!someSelected || deleting}
-                    onClick={() =>
-                      setDeleteDialog({ kind: 'batch', ids: Array.from(selectedIds) })
-                    }
-                  >
-                    <Trash2 className="w-4 h-4 mr-1" />
-                    批量删除
-                  </Button>
+                  {canDelete && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="ml-auto border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 disabled:opacity-40"
+                      disabled={!someSelected || deleting}
+                      onClick={() =>
+                        setDeleteDialog({ kind: 'batch', ids: Array.from(selectedIds) })
+                      }
+                    >
+                      <Trash2 className="w-4 h-4 mr-1" />
+                      批量删除
+                    </Button>
+                  )}
                 </div>
                 <ul className="space-y-3">
                   {projects.map((p) => {
@@ -224,13 +229,15 @@ const ProjectsSection = ({ onOpenProject }: ProjectsSectionProps) => {
                           }`}
                         >
                           <div className="flex items-start gap-3">
-                            <Checkbox
-                              className="mt-3"
-                              checked={checked}
-                              onCheckedChange={(v) => toggleSelect(p.id, v === true)}
-                              onClick={(e) => e.stopPropagation()}
-                              aria-label={`选择项目 ${p.title}`}
-                            />
+                            {canDelete && (
+                              <Checkbox
+                                className="mt-3"
+                                checked={checked}
+                                onCheckedChange={(v) => toggleSelect(p.id, v === true)}
+                                onClick={(e) => e.stopPropagation()}
+                                aria-label={`选择项目 ${p.title}`}
+                              />
+                            )}
                             <button
                               type="button"
                               onClick={() => openWithStep(p.id)}
@@ -262,16 +269,18 @@ const ProjectsSection = ({ onOpenProject }: ProjectsSectionProps) => {
                                 </p>
                               </div>
                             </button>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="shrink-0 text-[#1f1f1f]/40 hover:text-red-600 hover:bg-red-50"
-                              title="删除项目"
-                              onClick={() => setDeleteDialog({ kind: 'single', project: p })}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
+                            {canDelete && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="shrink-0 text-[#1f1f1f]/40 hover:text-red-600 hover:bg-red-50"
+                                title="删除项目"
+                                onClick={() => setDeleteDialog({ kind: 'single', project: p })}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            )}
                           </div>
                           <div className="flex flex-wrap gap-2 mt-3 pl-10">
                             <Button

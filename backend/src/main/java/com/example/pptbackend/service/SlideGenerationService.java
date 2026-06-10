@@ -3,6 +3,7 @@ package com.example.pptbackend.service;
 import com.example.pptbackend.dto.EvaluationReportResponse;
 import com.example.pptbackend.dto.ExternalSourceDocument;
 import com.example.pptbackend.dto.GenerateSlidesRequest;
+import com.example.pptbackend.dto.RegenerateSlideFromSourcesRequest;
 import com.example.pptbackend.dto.IndexSearchResult;
 import com.example.pptbackend.dto.SearchRequest;
 import com.example.pptbackend.dto.SearchResponse;
@@ -75,6 +76,8 @@ public class SlideGenerationService {
     private final ProjectRepository projectRepository;
     private final ExternalKnowledgeSourceService externalKnowledgeSourceService;
     private final SlideSourceCitationService slideSourceCitationService;
+    private final PptDisplayExtractionService pptDisplayExtractionService;
+    private final ProjectAccessService projectAccessService;
     private final EvaluationReportService evaluationReportService;
     private final TransactionTemplate transactionTemplate;
 
@@ -104,6 +107,8 @@ public class SlideGenerationService {
                                   ProjectRepository projectRepository,
                                   ExternalKnowledgeSourceService externalKnowledgeSourceService,
                                   SlideSourceCitationService slideSourceCitationService,
+                                  PptDisplayExtractionService pptDisplayExtractionService,
+                                  ProjectAccessService projectAccessService,
                                   EvaluationReportService evaluationReportService,
                                   TransactionTemplate transactionTemplate,
                                   @Value("${generation.slide-max-tokens:1536}") int slideMaxTokens,
@@ -126,6 +131,8 @@ public class SlideGenerationService {
         this.projectRepository = projectRepository;
         this.externalKnowledgeSourceService = externalKnowledgeSourceService;
         this.slideSourceCitationService = slideSourceCitationService;
+        this.pptDisplayExtractionService = pptDisplayExtractionService;
+        this.projectAccessService = projectAccessService;
         this.evaluationReportService = evaluationReportService;
         this.transactionTemplate = transactionTemplate;
         this.slideMaxTokens = Math.max(512, slideMaxTokens);
@@ -242,6 +249,296 @@ public class SlideGenerationService {
         slideRepository.save(slide);
 
         return parsed;
+    }
+
+    /**
+     * 依据用户已确认的引用来源，重新撰写本页讲稿要点并提炼 PPT 投影句；不覆盖用户 sources。
+     */
+    @Transactional
+    public SlideContentResponse regenerateSlideFromSources(Long projectId,
+                                                           Long slideId,
+                                                           RegenerateSlideFromSourcesRequest request) {
+        Slide slide = slideRepository.findByIdAndProject_Id(slideId, projectId)
+            .orElseThrow(() -> new EntityNotFoundException("Slide not found: " + slideId));
+        Project project = projectAccessService.requireReadableProject(projectId);
+        projectAccessService.assertWritable(project);
+
+        if (StructuralSlideDetector.isStructuralSlide(slide.getTitle(), slide.getChapter())) {
+            throw new IllegalArgumentException("封面、目录、Q&A 等页面无需按引用重生");
+        }
+
+        List<String> userSources = resolveUserSourcesForRegeneration(request, slide);
+        if (userSources.isEmpty()) {
+            throw new IllegalArgumentException("请先补充至少一条有效引用来源（含链接或 type=index 等）");
+        }
+
+        String title = request != null && request.getTitle() != null && !request.getTitle().isBlank()
+            ? request.getTitle().trim()
+            : (slide.getTitle() != null ? slide.getTitle().trim() : "");
+        if (title.isBlank()) {
+            throw new IllegalArgumentException("页面标题不能为空");
+        }
+        slide.setTitle(title);
+
+        List<Slide> ordered = loadOrderedSlides(projectId);
+        int idx = indexOfSlide(ordered, slide.getId());
+        String prevSlideTitle = idx <= 0 ? "无" : nzTitle(ordered.get(idx - 1).getTitle());
+        String nextSlideTitle = idx < 0 || idx >= ordered.size() - 1 ? "无" : nzTitle(ordered.get(idx + 1).getTitle());
+        String priorDigest = buildPriorSlidesDigest(ordered, idx);
+        String prevBulletsBlock = buildAdjacentBulletsBlock(ordered, idx - 1);
+        String nextBulletsBlock = buildAdjacentBulletsBlock(ordered, idx + 1);
+
+        String theme = request != null && request.getInputContent() != null && !request.getInputContent().isBlank()
+            ? request.getInputContent().trim()
+            : (project.getTheme() != null ? project.getTheme().trim() : project.getTitle());
+        String chapter = slide.getChapter() != null && !slide.getChapter().isBlank()
+            ? slide.getChapter().trim()
+            : "（无）";
+        String factMaterial = sourcesAsFactMaterial(userSources);
+        String previousBlock = buildPreviousContentBlock(request, slide);
+
+        int durationMinutes = PresentationDurationPlanner.clampMinutes(project.getPresentationDurationMinutes());
+
+        String prompt = """
+            你是演示稿撰稿人。本页 content 是**演讲者口头讲的要点**，听众看不到引用列表。
+            下方「事实素材」仅用于核对数字与结论；须**内化**为自然表述，禁止写成文献综述或引用格式。
+
+            ## 全稿主题
+            %s
+
+            ## 本页
+            标题：%s
+            章节：%s
+            演讲时长约束：约 %d 分钟全稿
+
+            ## 页间上下文
+            上一页标题：%s
+            下一页标题：%s
+
+            ## 前面各页要点摘要（保持连贯，勿重复已讲过的长案例）
+            %s
+
+            ## 上一页要点（首条可轻量承接，勿写「承接上一页」等元话术）
+            %s
+
+            ## 下一页方向（末条可自然过渡，勿写「下一页将讲」）
+            %s
+
+            %s
+
+            ## 事实素材（内化后写入 content；禁止在 content 中出现书名、章节、URL、来源编号）
+            %s
+
+            ## 写作规范（必须遵守）
+            1. 输出 3–5 条 content：口语化、先结论后证据，像演讲者在陈述，不是论文摘要。
+            2. **禁止**在 content 中出现：根据《…》、该来源/报告指出、来源强调、权威来源、external-…、type=、URL、章节号、「如上所述」「综上所述」。
+            3. 数字与机构名须来自事实素材，不得编造；无数字时可写定性结论。
+            4. 与全稿主题及前后页逻辑一致；勿引入与主题无关的新话题。
+            5. 只输出 JSON：{"content":["…","…"]}
+            """.formatted(
+            theme,
+            title,
+            chapter,
+            durationMinutes,
+            prevSlideTitle,
+            nextSlideTitle,
+            priorDigest,
+            prevBulletsBlock,
+            nextBulletsBlock,
+            previousBlock,
+            factMaterial);
+
+        SystemConfigDto config = systemConfigService.getSystemConfig();
+        String body = buildSlideRequestBody(prompt, config);
+        String responseText = deepseekChatClient.chatCompletions(body, Duration.ofSeconds(120));
+        SlideContentResponse parsed = parseSlideResponse(responseText);
+        List<String> content = polishPresentationBullets(parsed.getContent());
+        if (content.isEmpty()) {
+            throw new IllegalStateException("模型未返回有效要点，请检查引用是否与本页主题相关后重试");
+        }
+
+        slide.setBullets(content);
+        slide.setSources(slideSourceCitationService.formatSourceLinesForStorage(userSources));
+        slide.setNotes(null);
+
+        List<String> pptBullets = pptDisplayExtractionService.extractForSlide(slide, durationMinutes);
+        slide.setPptBullets(pptBullets);
+        slideRepository.save(slide);
+
+        SlideContentResponse out = new SlideContentResponse();
+        out.setContent(content);
+        out.setSources(slideSourceCitationService.formatSourceLinesForStorage(userSources));
+        out.setPptBullets(pptBullets);
+        out.setNotes("");
+        log.info("Regenerated slide {} from {} user sources for project {}", slideId, userSources.size(), projectId);
+        return out;
+    }
+
+    private List<String> resolveUserSourcesForRegeneration(RegenerateSlideFromSourcesRequest request, Slide slide) {
+        List<String> raw = request != null && request.getSources() != null && !request.getSources().isEmpty()
+            ? request.getSources()
+            : slide.getSources();
+        if (raw == null) {
+            return List.of();
+        }
+        List<String> normalized = slideSourceCitationService.formatSourceLinesForStorage(raw);
+        return normalized.stream()
+            .filter(s -> s != null && !s.isBlank())
+            .filter(s -> !s.contains("未命中可核验的外部链接"))
+            .filter(s -> !s.contains("手动补充出处"))
+            .toList();
+    }
+
+    private static List<String> polishPresentationBullets(List<String> lines) {
+        if (lines == null || lines.isEmpty()) {
+            return List.of();
+        }
+        return lines.stream()
+            .map(SlideGenerationService::stripVerificationMarks)
+            .map(SlideGenerationService::stripMetaCitationPhrasing)
+            .filter(s -> s != null && !s.isBlank())
+            .collect(Collectors.toList());
+    }
+
+    /** 去掉讲稿中的文献式、来源式表述（引用只留在 sources 字段） */
+    private static String stripMetaCitationPhrasing(String line) {
+        if (line == null || line.isBlank()) {
+            return "";
+        }
+        String s = line.trim();
+        s = s.replaceAll("(?i)\\(external-[\\w-]+\\)", "");
+        s = s.replaceAll("（external-[\\w-]+）", "");
+        s = s.replaceAll("根据《[^》]{1,80}》[^，。；]*[，,]?", "");
+        s = s.replaceAll("《[^》]{1,80}》[^，。；]*[，,]?", "");
+        s = s.replaceAll("(该来源|来源|上述来源|权威来源|参考资料|文献)(指出|表明|强调|显示|称|认为)[，,]?", "");
+        s = s.replaceAll("(报告指出|研究认为|有研究指出)[，,]?", "");
+        s = s.replaceAll("type=(tavily|mediawiki|index|llm_inference)[^，。；\\s]*", "");
+        s = s.replaceAll("https?://\\S+", "");
+        s = s.replaceAll("\\s{2,}", " ").trim();
+        if (s.startsWith("，") || s.startsWith(",")) {
+            s = s.substring(1).trim();
+        }
+        return s;
+    }
+
+    private static int indexOfSlide(List<Slide> ordered, Long slideId) {
+        for (int i = 0; i < ordered.size(); i++) {
+            if (slideId.equals(ordered.get(i).getId())) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private String buildPriorSlidesDigest(List<Slide> ordered, int currentIdx) {
+        if (currentIdx <= 0) {
+            return "（尚无：本页为前几页。）";
+        }
+        List<String> chunks = new ArrayList<>();
+        for (int i = 0; i < currentIdx; i++) {
+            Slide s = ordered.get(i);
+            List<String> bullets = s.getBullets();
+            if (bullets == null || bullets.isEmpty()) {
+                continue;
+            }
+            String joined = bullets.stream()
+                .map(SlideGenerationService::stripMetaCitationPhrasing)
+                .filter(b -> !b.isBlank())
+                .collect(Collectors.joining("；"));
+            if (!joined.isBlank()) {
+                chunks.add("【" + nzTitle(s.getTitle()) + "】" + joined);
+            }
+        }
+        if (chunks.isEmpty()) {
+            return "（前面各页尚无讲稿要点。）";
+        }
+        String digest = String.join("\n", chunks);
+        if (digest.length() > 2800) {
+            digest = digest.substring(digest.length() - 2800);
+        }
+        return digest;
+    }
+
+    private String buildAdjacentBulletsBlock(List<Slide> ordered, int idx) {
+        if (idx < 0 || idx >= ordered.size()) {
+            return "（无）";
+        }
+        Slide s = ordered.get(idx);
+        List<String> bullets = s.getBullets();
+        if (bullets == null || bullets.isEmpty()) {
+            return "（无要点）";
+        }
+        return bullets.stream()
+            .map(b -> "- " + stripMetaCitationPhrasing(b))
+            .filter(b -> b.length() > 2)
+            .collect(Collectors.joining("\n"));
+    }
+
+    private String buildPreviousContentBlock(RegenerateSlideFromSourcesRequest request, Slide slide) {
+        List<String> prev = request != null && request.getPreviousContent() != null && !request.getPreviousContent().isEmpty()
+            ? request.getPreviousContent()
+            : slide.getBullets();
+        if (prev == null || prev.isEmpty()) {
+            return "";
+        }
+        String block = prev.stream()
+            .map(b -> "- " + b)
+            .collect(Collectors.joining("\n"));
+        return "## 本页现有要点（可改写优化，勿保留文献式引用口吻）\n" + block + "\n";
+    }
+
+    /** 将引用行转为无书目腔的事实素材，供模型内化 */
+    private String sourcesAsFactMaterial(List<String> userSources) {
+        List<String> lines = new ArrayList<>();
+        int i = 1;
+        for (String raw : userSources) {
+            String fact = extractFactFromSourceLine(raw, i++);
+            if (!fact.isBlank()) {
+                lines.add("- " + fact);
+            }
+        }
+        return lines.isEmpty() ? "（无）" : String.join("\n", lines);
+    }
+
+    private static String extractFactFromSourceLine(String line, int index) {
+        if (line == null || line.isBlank()) {
+            return "";
+        }
+        String t = line.trim();
+        int excerptIdx = t.indexOf("节选：");
+        if (excerptIdx >= 0) {
+            String excerpt = t.substring(excerptIdx + 3).replaceAll("\\|\\s*type=.*$", "").trim();
+            return excerpt.replaceAll("^：", "").trim();
+        }
+        if (t.contains(" | ")) {
+            String[] parts = t.split("\\|");
+            for (String part : parts) {
+                String p = part.trim();
+                if (p.startsWith("http") || p.startsWith("type=") || p.matches("(?i)external-\\d+.*")) {
+                    continue;
+                }
+                if (p.length() > 12 && !p.contains("://")) {
+                    return p;
+                }
+            }
+            String cleaned = t.replaceAll("\\|\\s*type=.*$", "").replaceAll("https?://\\S+", "").trim();
+            if (cleaned.length() > 20) {
+                return cleaned;
+            }
+        }
+        return "素材" + index + "：" + t.replaceAll("\\|\\s*type=.*$", "").replaceAll("https?://\\S+", "").trim();
+    }
+
+    private static String stripVerificationMarks(String line) {
+        if (line == null) {
+            return "";
+        }
+        return line
+            .replace("[待核实]", "")
+            .replace("【待核实】", "")
+            .replace("[待补充权威来源]", "")
+            .replaceAll("\\s{2,}", " ")
+            .trim();
     }
 
     public void generateAllSlides(Long projectId, GenerateSlidesRequest request) {

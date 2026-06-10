@@ -15,6 +15,8 @@ import {
   slideDataNeedsCitationAttention,
 } from '@/lib/citationHints';
 import { isStructuralSlideData } from '@/lib/structuralSlide';
+import { stripVerificationMarks } from '@/lib/citationFormat';
+import { consumeCitationReturnContext } from '@/lib/citationReturnContext';
 import {
   addProjectSlide,
   deleteProjectSlide,
@@ -68,6 +70,15 @@ const ContentSection = ({
   );
 
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
+
+  useEffect(() => {
+    if (slides.length === 0) return;
+    const ctx = consumeCitationReturnContext();
+    if (!ctx || ctx.projectId !== projectId || ctx.step !== 'content') return;
+    if (ctx.slideIndex >= 0 && ctx.slideIndex < slides.length) {
+      setCurrentSlideIndex(ctx.slideIndex);
+    }
+  }, [projectId, slides.length]);
   const [isLoading, setIsLoading] = useState(false);
   const [isStructuring, setIsStructuring] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
@@ -496,6 +507,10 @@ const ContentSection = ({
                   <SlideCitationEditor
                     projectId={projectId}
                     slideId={currentSlide.slideId}
+                    slideTitle={currentSlide.title}
+                    slideIndex={currentSlideIndex}
+                    flowStep="content"
+                    deckTheme={deckTheme}
                     content={currentSlide.content}
                     sources={currentSlide.sources}
                     disabled={busy}
@@ -503,6 +518,16 @@ const ContentSection = ({
                     onPersist={(sources) =>
                       persistSlideSources(projectId, { ...currentSlide, sources }, sources)
                     }
+                    onVerifyBullet={(bulletIndex) => {
+                      const next = [...currentSlide.content];
+                      next[bulletIndex] = stripVerificationMarks(next[bulletIndex]);
+                      patchCurrentSlide({ content: next });
+                      void persistSlideBullets(projectId, { ...currentSlide, content: next });
+                    }}
+                    onRegenerated={(patch) => {
+                      patchCurrentSlide(patch);
+                      void persistSlideBullets(projectId, { ...currentSlide, ...patch });
+                    }}
                   />
                 )}
               </div>

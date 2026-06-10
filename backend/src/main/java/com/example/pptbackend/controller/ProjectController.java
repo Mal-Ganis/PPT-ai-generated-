@@ -10,6 +10,7 @@ import com.example.pptbackend.dto.ProjectSummaryDto;
 import com.example.pptbackend.dto.SlideContentResponse;
 import com.example.pptbackend.dto.SlideGenerationStatusDto;
 import com.example.pptbackend.dto.RegenerateOutlineRequest;
+import com.example.pptbackend.dto.RegenerateSlideFromSourcesRequest;
 import com.example.pptbackend.dto.TopicProjectRequest;
 import com.example.pptbackend.dto.UpdateSlideRequest;
 import com.example.pptbackend.service.DocumentTextExtractionService;
@@ -186,6 +187,16 @@ public class ProjectController {
             payload.getInputContent()
         );
         return ResponseEntity.ok(response);
+    }
+
+    /** 依据用户已确认的引用，重新生成本页讲稿要点与 PPT 投影句（保留 sources） */
+    @PostMapping("/{projectId:\\d+}/slides/{slideId:\\d+}/regenerate-from-sources")
+    public ResponseEntity<SlideContentResponse> regenerateSlideFromSources(
+        @PathVariable("projectId") Long projectId,
+        @PathVariable("slideId") Long slideId,
+        @RequestBody RegenerateSlideFromSourcesRequest request
+    ) {
+        return ResponseEntity.ok(slideGenerationService.regenerateSlideFromSources(projectId, slideId, request));
     }
 
     /** 异步：从讲稿要点提炼适合投影的 pptBullets */

@@ -41,6 +41,10 @@ public class Project {
     @Column(nullable = false)
     private OffsetDateTime updatedAt;
 
+    /** 项目归属用户；历史数据可为 null（全员可读，仅管理员可删改）。 */
+    @Column(name = "owner_user_id")
+    private Long ownerUserId;
+
     @OneToMany(mappedBy = "project", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     private List<Slide> slides = new ArrayList<>();
 
@@ -82,6 +86,14 @@ public class Project {
 
     public OffsetDateTime getUpdatedAt() {
         return updatedAt;
+    }
+
+    public Long getOwnerUserId() {
+        return ownerUserId;
+    }
+
+    public void setOwnerUserId(Long ownerUserId) {
+        this.ownerUserId = ownerUserId;
     }
 
     public List<Slide> getSlides() {
