@@ -10,9 +10,12 @@ import org.springframework.transaction.annotation.Transactional;
 public class SystemConfigService {
 
     private final SystemConfigRepository systemConfigRepository;
+    private final LlmApiKeyService llmApiKeyService;
 
-    public SystemConfigService(SystemConfigRepository systemConfigRepository) {
+    public SystemConfigService(SystemConfigRepository systemConfigRepository,
+                               LlmApiKeyService llmApiKeyService) {
         this.systemConfigRepository = systemConfigRepository;
+        this.llmApiKeyService = llmApiKeyService;
     }
 
     @Transactional
@@ -26,6 +29,7 @@ public class SystemConfigService {
     public SystemConfigDto saveSystemConfig(SystemConfigDto dto) {
         SystemConfig config = systemConfigRepository.findTopByOrderByIdAsc().orElse(new SystemConfig());
         config.setLlmModel(dto.getLlmModel());
+        config.setLlmBaseUrl(dto.getLlmBaseUrl());
         config.setTemperature(dto.getTemperature());
         config.setMaxTokens(dto.getMaxTokens());
         config.setTopP(dto.getTopP());
@@ -34,6 +38,24 @@ public class SystemConfigService {
         config.setOutlinePromptTemplate(dto.getOutlinePromptTemplate());
         config.setSlidePromptTemplate(dto.getSlidePromptTemplate());
         config.setOutlineIncludeQaSlide(dto.getOutlineIncludeQaSlide() != null ? dto.getOutlineIncludeQaSlide() : true);
+        if (dto.getSelfCorrectionEnabled() != null) {
+            config.setSelfCorrectionEnabled(dto.getSelfCorrectionEnabled());
+        }
+        if (dto.getSelfCorrectionTier1AutoBelow() != null) {
+            config.setSelfCorrectionTier1AutoBelow(dto.getSelfCorrectionTier1AutoBelow());
+        }
+        if (dto.getSelfCorrectionTier1FactBelow() != null) {
+            config.setSelfCorrectionTier1FactBelow(dto.getSelfCorrectionTier1FactBelow());
+        }
+        if (dto.getSelfCorrectionTier2AutoBelow() != null) {
+            config.setSelfCorrectionTier2AutoBelow(dto.getSelfCorrectionTier2AutoBelow());
+        }
+        if (dto.getSelfCorrectionTier2FactBelow() != null) {
+            config.setSelfCorrectionTier2FactBelow(dto.getSelfCorrectionTier2FactBelow());
+        }
+        if (dto.getLlmApiKeyPresets() != null) {
+            llmApiKeyService.savePresetsFromAdmin(dto.getLlmApiKeyPresets());
+        }
 
         return toDto(systemConfigRepository.save(config));
     }
@@ -42,6 +64,9 @@ public class SystemConfigService {
         SystemConfigDto dto = new SystemConfigDto();
         dto.setId(config.getId());
         dto.setLlmModel(config.getLlmModel());
+        dto.setLlmBaseUrl(config.getLlmBaseUrl() != null && !config.getLlmBaseUrl().isBlank()
+            ? config.getLlmBaseUrl()
+            : "https://api.deepseek.com");
         dto.setTemperature(config.getTemperature());
         dto.setMaxTokens(config.getMaxTokens());
         dto.setTopP(config.getTopP());
@@ -50,6 +75,12 @@ public class SystemConfigService {
         dto.setOutlinePromptTemplate(config.getOutlinePromptTemplate());
         dto.setSlidePromptTemplate(config.getSlidePromptTemplate());
         dto.setOutlineIncludeQaSlide(config.getOutlineIncludeQaSlide() != null ? config.getOutlineIncludeQaSlide() : true);
+        dto.setSelfCorrectionEnabled(config.getSelfCorrectionEnabled() != null ? config.getSelfCorrectionEnabled() : false);
+        dto.setSelfCorrectionTier1AutoBelow(config.getSelfCorrectionTier1AutoBelow() != null ? config.getSelfCorrectionTier1AutoBelow() : 76.0);
+        dto.setSelfCorrectionTier1FactBelow(config.getSelfCorrectionTier1FactBelow() != null ? config.getSelfCorrectionTier1FactBelow() : 0.58);
+        dto.setSelfCorrectionTier2AutoBelow(config.getSelfCorrectionTier2AutoBelow() != null ? config.getSelfCorrectionTier2AutoBelow() : 70.0);
+        dto.setSelfCorrectionTier2FactBelow(config.getSelfCorrectionTier2FactBelow() != null ? config.getSelfCorrectionTier2FactBelow() : 0.48);
+        dto.setLlmApiKeyPresets(llmApiKeyService.listPresetsForAdmin());
         return dto;
     }
 
@@ -72,14 +103,23 @@ public class SystemConfigService {
     private static void applyBuiltInDefaults(SystemConfig config) {
         // deepseek-reasoner 常先输出长推理，易导致大纲阶段无法解析 JSON；结构化大纲优先用 chat
         config.setLlmModel("deepseek-chat");
+        config.setLlmBaseUrl("https://api.deepseek.com");
         config.setTemperature(0.7);
         config.setMaxTokens(1024);
         config.setTopP(0.95);
         config.setTopK(1);
         config.setRetrievalLimit(3);
         config.setOutlineIncludeQaSlide(true);
+        config.setSelfCorrectionEnabled(false);
+        config.setSelfCorrectionTier1AutoBelow(76.0);
+        config.setSelfCorrectionTier1FactBelow(0.58);
+        config.setSelfCorrectionTier2AutoBelow(70.0);
+        config.setSelfCorrectionTier2FactBelow(0.48);
         config.setOutlinePromptTemplate("""
-你是一位专业的商业叙事顾问。请基于下列输入生成逻辑严谨、数据驱动的 PPT 大纲。**大纲只负责「叙事骨架」**：章节名、页标题、每条要点写什么维度；不写幻灯片正文血肉细节——血肉留给下一阶段模板生成。
+## 演示角色
+{narrator_role}
+
+请基于下列输入生成逻辑严谨、与上述角色匹配的 PPT 大纲。**大纲只负责「叙事骨架」**：章节名、页标题、每条要点写什么维度；不写幻灯片正文血肉细节——血肉留给下一阶段模板生成。
 
 ## 主题与检索资料
 【主题 / 上传节选 / 系统注入的叙事主料】
@@ -128,14 +168,14 @@ public class SystemConfigService {
 }
 
 ## 叙事结构强制要求
-0. **封面与目录（强制且唯一）**：第 1 页封面：`title`=演示主标题（=JSON title），`chapter`=`封面`，content 仅副标题/汇报信息。第 2 页目录：`title`=`目录`，`chapter`=`目录`，content 列出 **4–10 个章节名**（不是正文页 title）。第 3 页起正文：`title`=页主题，`chapter`=目录中的章节名之一。**禁止**第二页目录。
+0. **封面与目录（强制且唯一）**：第 1 页封面：`title`=演示主标题（=JSON title），`chapter`=`封面`，content 仅副标题/汇报信息；**禁止编造具体日期**（无用户输入时用「日期（待填写）」）；**用户指定演示角色时汇报人须写该角色名**，勿写无关单位或课题组。第 2 页目录：`title`=`目录`，`chapter`=`目录`，content 列出 **4–10 个章节名**（不是正文页 title）。第 3 页起正文：`title`=页主题，`chapter`=目录中的章节名之一。**禁止**第二页目录。
 1. 整体弧线：钩子/冲突 → 背景数据 → 核心分析（2–3 章，递进而非并列堆砌）→ 案例或量化证据 → 风险/边界 → 结论与行动呼吁 → **Q&A 与讨论（强制，见文末系统约束）**。
 2. 章节之间须有因果关系或递进关系；禁止简单并列「优势 1、2、3」式堆叠。
 3. 每章的首页 title 应体现该章「叙事功能」（例如「为何必须现在行动？」）。
 4. 页数：简单主题 ≥6 页；复杂主题 10–14 页。
 
 ## 内容质量红线（必须遵守）
-- 【数据锚点】至少约 60% 的 content 要点须包含具体数字、年份、机构名或产品名；若无检索依据，用可理解的常识数字亦须标明不确定性并在该要点末标 [待补充权威来源]。
+- 【数据锚点】**封面、目录、Q&A 页不适用本条**；正文页至少约 60%% 的 content 要点须包含具体数字、年份、机构名或产品名；若无检索依据，用可理解的常识数字亦须标明不确定性并在该要点末标 [待补充权威来源]。
 - 【禁止重复】同一公司/产品/大学/实验案例在全稿中**不得**在多页重复展开；同一统计口径全文最多出现 2 次且须递进（第二次只作对比或收束，不复述故事）。
 - 【禁止空洞】禁止「随着 XX 的发展」「众所周知」「XX 是指……」等无信息增量表述。
 - 【禁止许愿式预测】禁止单独使用「有望达到」「或将突破」等模糊预测，除非给出年份区间与依据线索。
@@ -162,7 +202,10 @@ public class SystemConfigService {
   ]
 }""");
         config.setSlidePromptTemplate("""
-你是一位资深演示文稿撰稿人。本阶段负责「血肉填充」：在叙事骨架（章节名、页标题）已定的前提下，写出可上台宣读的高密度要点。**须与大纲共用章节名与数字锚点**；页与页之间用要点内的承接词体现递进，避免与前面各页摘要重复同一案例长段展开。
+## 演示角色
+{narrator_role}
+
+本阶段负责「血肉填充」：在叙事骨架（章节名、页标题）已定的前提下，写出可上台宣读的高密度要点。**须与大纲共用章节名、数字锚点与上述角色口吻**；页与页之间用要点内的承接词体现递进，避免与前面各页摘要重复同一案例长段展开。
 
 ## 上下文信息（保持叙事连贯）
 幻灯片标题：{slideTitle}
@@ -185,8 +228,7 @@ public class SystemConfigService {
     "（可选）行动建议"
   ],
   "sources": [
-    "来源标题 | https://真实链接 | type=tavily",
-    "常识归纳 | type=llm_inference"
+    "来源标题 | https://真实链接 | type=tavily"
   ]
 }
 
@@ -194,7 +236,7 @@ public class SystemConfigService {
 1. **三层结构**：每条 content 尽量包含「观点 → 证据 → 影响」，缺一不可（检索为空时证据写常识并标 [待核实]）。
 2. **数据密度**：全页至少 2 条要点须含具体数字、百分比、年份或机构名；检索上下文中有数字时优先引用检索。
 3. **页间衔接**：若 prevSlideTitle 非「无」，首条 content 宜有一句轻量承接上一页结论；若 nextSlideTitle 非「无」，末条 content 可自然指向下一页主题（不必单独写演讲稿）。
-4. **来源追溯**：至少 1 条 sources；**禁止** example.com、localhost、明显占位路径（如 article/123456）；**禁止**杜撰检索中未出现的 URL；不确定则写「常识推断 | llm_inference」。
+4. **来源追溯**：sources **仅**写检索上下文或「引用候选」中的真实标题/链接；**禁止**在 sources 写「常识推断」「llm_inference」「llm-inference」等占位；无可用链接时 sources 可留空 `[]`，并在 content 标 [待核实]。
 5. **禁止项**：禁止「前景广阔」「具有重要意义」等无证据断言；禁止与「前面各页摘要」中已详述的案例再写长段；禁止编造链接。
 
 ## 自检（生成前想一想）

@@ -82,7 +82,12 @@ public class ProjectController {
         }
         ProjectOutlineResponse outline = projectService.createProjectFromTopic(
             request.getTopic(),
-            request.getPresentationDurationMinutes());
+            request.getPresentationDurationMinutes(),
+            request.getPresenterRole(),
+            request.getLlmApiKeyPresetId(),
+            request.getLlmApiKeyOverride(),
+            request.getLlmBaseUrlOverride(),
+            request.getLlmModelOverride());
         return ResponseEntity.status(HttpStatus.CREATED).body(outline);
     }
 
@@ -105,7 +110,12 @@ public class ProjectController {
         ProjectOutlineResponse outline = projectService.createProjectFromDocument(
             request.getTitle(),
             request.getText(),
-            request.getPresentationDurationMinutes());
+            request.getPresentationDurationMinutes(),
+            request.getPresenterRole(),
+            request.getLlmApiKeyPresetId(),
+            request.getLlmApiKeyOverride(),
+            request.getLlmBaseUrlOverride(),
+            request.getLlmModelOverride());
         return ResponseEntity.status(HttpStatus.CREATED).body(outline);
     }
 
@@ -116,12 +126,24 @@ public class ProjectController {
     public ResponseEntity<ProjectOutlineResponse> uploadDocument(
         @RequestParam("file") MultipartFile file,
         @RequestParam(value = "title", required = false) String title,
-        @RequestParam(value = "presentationDurationMinutes", required = false) Integer presentationDurationMinutes
+        @RequestParam(value = "presentationDurationMinutes", required = false) Integer presentationDurationMinutes,
+        @RequestParam(value = "presenterRole", required = false) String presenterRole,
+        @RequestParam(value = "llmApiKeyPresetId", required = false) String llmApiKeyPresetId,
+        @RequestParam(value = "llmApiKeyOverride", required = false) String llmApiKeyOverride,
+        @RequestParam(value = "llmBaseUrlOverride", required = false) String llmBaseUrlOverride,
+        @RequestParam(value = "llmModelOverride", required = false) String llmModelOverride
     ) throws IOException {
         String text = documentTextExtractionService.extractText(file);
         String resolvedTitle = title != null && !title.isBlank() ? title : deriveFilenameTitle(file);
         ProjectOutlineResponse outline = projectService.createProjectFromDocument(
-            resolvedTitle, text, presentationDurationMinutes);
+            resolvedTitle,
+            text,
+            presentationDurationMinutes,
+            presenterRole,
+            llmApiKeyPresetId,
+            llmApiKeyOverride,
+            llmBaseUrlOverride,
+            llmModelOverride);
         return ResponseEntity.status(HttpStatus.CREATED).body(outline);
     }
 
@@ -180,12 +202,7 @@ public class ProjectController {
                                                                @PathVariable("slideId") Long slideId,
                                                                @RequestBody(required = false) GenerateSlidesRequest request) {
         GenerateSlidesRequest payload = request != null ? request : new GenerateSlidesRequest();
-        SlideContentResponse response = slideGenerationService.regenerateSlide(
-            projectId,
-            slideId,
-            payload.getInputType(),
-            payload.getInputContent()
-        );
+        SlideContentResponse response = slideGenerationService.regenerateSlide(projectId, slideId, payload);
         return ResponseEntity.ok(response);
     }
 

@@ -11,6 +11,8 @@ public class ProjectDetailResponse {
     private String title;
     private String theme;
     private Integer presentationDurationMinutes;
+    private String presenterRole;
+    private String llmApiKeyPresetId;
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;
     private List<SlideItem> slides;
@@ -46,6 +48,22 @@ public class ProjectDetailResponse {
 
     public void setPresentationDurationMinutes(Integer presentationDurationMinutes) {
         this.presentationDurationMinutes = presentationDurationMinutes;
+    }
+
+    public String getPresenterRole() {
+        return presenterRole;
+    }
+
+    public void setPresenterRole(String presenterRole) {
+        this.presenterRole = presenterRole;
+    }
+
+    public String getLlmApiKeyPresetId() {
+        return llmApiKeyPresetId;
+    }
+
+    public void setLlmApiKeyPresetId(String llmApiKeyPresetId) {
+        this.llmApiKeyPresetId = llmApiKeyPresetId;
     }
 
     public OffsetDateTime getCreatedAt() {

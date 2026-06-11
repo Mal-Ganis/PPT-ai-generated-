@@ -20,11 +20,19 @@ public class IndexSegmentService {
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
     private final EmbeddingService embeddingService;
+    private final ProjectAccessService projectAccessService;
+    private final CurrentUserService currentUserService;
 
-    public IndexSegmentService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper, EmbeddingService embeddingService) {
+    public IndexSegmentService(JdbcTemplate jdbcTemplate,
+                               ObjectMapper objectMapper,
+                               EmbeddingService embeddingService,
+                               ProjectAccessService projectAccessService,
+                               CurrentUserService currentUserService) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
         this.embeddingService = embeddingService;
+        this.projectAccessService = projectAccessService;
+        this.currentUserService = currentUserService;
     }
 
     @Transactional
@@ -51,8 +59,23 @@ public class IndexSegmentService {
     }
 
     @Transactional
+    public void deleteByProjectIdAndSegmentId(Long projectId, String segmentId) {
+        if (projectId == null || segmentId == null || segmentId.isBlank()) {
+            return;
+        }
+        jdbcTemplate.update(
+            "DELETE FROM index_segments WHERE project_id = ? AND segment_id = ?",
+            projectId,
+            segmentId);
+    }
+
+    @Transactional
     public Long indexSegment(IndexSegmentRequest request) {
         validateSegmentRequest(request);
+        if (currentUserService.optionalAuthenticated() != null) {
+            var project = projectAccessService.requireReadableProject(request.getProjectId());
+            projectAccessService.assertWritable(project);
+        }
 
         String metadataJson = serializeMetadata(request.getMetadata());
         String vectorLiteral = toVectorLiteral(request.getEmbedding());
@@ -63,6 +86,30 @@ public class IndexSegmentService {
         return jdbcTemplate.queryForObject(sql,
             new Object[]{request.getProjectId(), request.getSegmentId(), request.getContent(), metadataJson, vectorLiteral},
             Long.class);
+    }
+
+    @Transactional(readOnly = true)
+    public long countByProjectId(Long projectId) {
+        if (projectId == null) {
+            return 0;
+        }
+        Long n = jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM index_segments WHERE project_id = ?",
+            Long.class,
+            projectId);
+        return n != null ? n : 0;
+    }
+
+    /** 项目内全量片段（词面回退用，不含 embedding）。 */
+    @Transactional(readOnly = true)
+    public List<IndexSearchResult> listByProjectId(Long projectId, int limit) {
+        if (projectId == null) {
+            return List.of();
+        }
+        int cap = limit > 0 ? Math.min(limit, 500) : 200;
+        String sql = "SELECT id, project_id, segment_id, content, metadata, NULL::float8 AS distance "
+            + "FROM index_segments WHERE project_id = ? ORDER BY id ASC LIMIT ?";
+        return jdbcTemplate.query(sql, rowMapper(), projectId, cap);
     }
 
     @Transactional(readOnly = true)
@@ -80,6 +127,13 @@ public class IndexSegmentService {
     @Transactional(readOnly = true)
     public SearchResponse search(SearchRequest request) {
         validateSearchRequest(request);
+        if (currentUserService.optionalAuthenticated() != null) {
+            if (request.getProjectId() != null) {
+                projectAccessService.requireReadableProject(request.getProjectId());
+            } else if (!currentUserService.isAdmin()) {
+                throw new org.springframework.security.access.AccessDeniedException("请指定可访问的项目后再检索");
+            }
+        }
 
         String vectorLiteral = toVectorLiteral(request.getQueryEmbedding());
         int topK = request.getTopK() != null && request.getTopK() > 0 ? request.getTopK() : 5;

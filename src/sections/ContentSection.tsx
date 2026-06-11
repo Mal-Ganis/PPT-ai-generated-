@@ -7,7 +7,9 @@ import type { WorkflowProgress, WorkflowStep } from '@/lib/workflowSteps';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { regenerateSlide } from '@/lib/backend';
+import { fetchEvaluationReports, regenerateSlide } from '@/lib/backend';
+import { buildEvaluationCompleteToast } from '@/lib/evaluationQuality';
+import { toast } from 'sonner';
 import { findSlideIndexByAnchor, reorderSlidesArray, slideAnchor } from '@/lib/slideOrder';
 import { SlideCitationEditor } from '@/components/SlideCitationEditor';
 import {
@@ -34,6 +36,10 @@ interface ContentSectionProps {
   deckTheme: string;
   inputType: 'topic' | 'document';
   inputContent: string;
+  llmApiKeyPresetId?: string | null;
+  llmApiKeyOverride?: string;
+  llmBaseUrlOverride?: string;
+  llmModelOverride?: string;
   onSlidesChange?: (slides: SlideData[]) => void;
   workflowProgress: WorkflowProgress;
   onGoToStep: (step: WorkflowStep) => void;
@@ -47,6 +53,10 @@ const ContentSection = ({
   deckTheme,
   inputType,
   inputContent,
+  llmApiKeyPresetId,
+  llmApiKeyOverride,
+  llmBaseUrlOverride,
+  llmModelOverride,
   onSlidesChange,
   workflowProgress,
   onGoToStep,
@@ -104,12 +114,24 @@ const ContentSection = ({
       const result = await regenerateSlide(projectId, currentSlide.slideId, {
         inputType,
         inputContent,
+        llmApiKeyPresetId: llmApiKeyOverride?.trim() ? null : (llmApiKeyPresetId ?? null),
+        llmApiKeyOverride: llmApiKeyOverride?.trim() || undefined,
+        llmBaseUrlOverride: llmBaseUrlOverride?.trim() || undefined,
+        llmModelOverride: llmModelOverride?.trim() || undefined,
       });
       patchCurrentSlide({
         content: result.content?.length ? result.content : currentSlide.content,
         pptContent: [],
         sources: result.sources?.length ? result.sources : currentSlide.sources,
       });
+      try {
+        const evals = await fetchEvaluationReports(projectId);
+        if (evals.length > 0) {
+          toast.success(buildEvaluationCompleteToast(evals[0]), { duration: 6000 });
+        }
+      } catch {
+        // 评估刷新失败不阻断编辑
+      }
     } catch (error) {
       console.error(error);
       alert(`重新生成失败：${error instanceof Error ? error.message : '未知错误'}`);
@@ -188,14 +210,14 @@ const ContentSection = ({
 
   const handleAddPage = async () => {
     setIsStructuring(true);
-    setStatusMessage('正在添加页面并生成讲稿…');
+    setStatusMessage('正在添加空白页…');
     try {
       const { slides: merged, newIndex } = await addProjectSlide(
         projectId,
         deckTitle,
         deckTheme,
         slides,
-        { inputType, inputContent, regenerateContent: true },
+        { inputType, inputContent, regenerateContent: false },
       );
       applySlides(merged);
       setCurrentSlideIndex(newIndex);

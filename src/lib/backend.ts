@@ -58,16 +58,21 @@ backendApi.interceptors.request.use((config) => {
 backendApi.interceptors.response.use(
   (r) => r,
   (err: unknown) => {
-    const ax = err as { response?: { status?: number; config?: { url?: string } } };
+    const ax = err as {
+      response?: { status?: number; config?: { url?: string; skipErrorToast?: boolean } };
+      message?: string;
+    };
     const msg = extractAxiosErrorMessage(err);
     const url = ax.response?.config?.url ?? '';
+    const skipToast = ax.response?.config?.skipErrorToast === true
+      || url.includes('/api/config/llm-api-key-presets');
     if (ax.response?.status === 401 && !url.includes('/api/auth/login')) {
       clearAuthSession();
       if (window.location.pathname !== '/login') {
         window.location.href = '/login';
       }
     }
-    if (ax.response) {
+    if (ax.response && !skipToast) {
       toast.error(msg);
     }
     return Promise.reject(err);
@@ -79,6 +84,7 @@ export interface AuthUserProfile {
   username: string;
   displayName: string;
   role: string;
+  editorAccessStatus?: 'PENDING' | 'APPROVED' | 'REJECTED' | null;
 }
 
 export interface AuthSessionResponse {
@@ -95,12 +101,110 @@ export async function register(
   username: string,
   password: string,
   displayName?: string,
+  inviteCode?: string,
 ): Promise<AuthSessionResponse> {
   const { data } = await backendApi.post<AuthSessionResponse>('/api/auth/register', {
     username,
     password,
     displayName,
+    inviteCode: inviteCode?.trim() || undefined,
   });
+  return data;
+}
+
+export interface EditorAccessStatus {
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | null;
+  message?: string;
+}
+
+export async function submitEditorAccessRequest(message?: string): Promise<EditorAccessStatus> {
+  const { data } = await backendApi.post<EditorAccessStatus>('/api/auth/editor-access-request', {
+    message: message?.trim() || undefined,
+  });
+  return data;
+}
+
+export async function fetchEditorAccessStatus(): Promise<EditorAccessStatus> {
+  const { data } = await backendApi.get<EditorAccessStatus>('/api/auth/editor-access-request/status');
+  return data;
+}
+
+export interface AdminUserRow {
+  id: number;
+  username: string;
+  displayName: string;
+  role: string;
+  createdAt?: string;
+  editorAccessStatus?: 'PENDING' | 'APPROVED' | 'REJECTED' | null;
+}
+
+export interface EditorAccessRequestRow {
+  id: number;
+  userId: number;
+  username: string;
+  displayName: string;
+  currentRole: string;
+  status: string;
+  message?: string;
+  createdAt?: string;
+}
+
+export interface InviteCodeRow {
+  id: number;
+  code: string;
+  role: string;
+  maxUses: number;
+  usedCount: number;
+  active: boolean;
+  note?: string;
+  createdAt?: string;
+}
+
+export async function fetchAdminUsers(): Promise<AdminUserRow[]> {
+  const { data } = await backendApi.get<AdminUserRow[]>('/api/admin/users');
+  return data;
+}
+
+export async function updateAdminUserRole(userId: number, role: string): Promise<AdminUserRow> {
+  const { data } = await backendApi.patch<AdminUserRow>(`/api/admin/users/${userId}/role`, { role });
+  return data;
+}
+
+export async function fetchPendingEditorRequests(): Promise<EditorAccessRequestRow[]> {
+  const { data } = await backendApi.get<EditorAccessRequestRow[]>('/api/admin/editor-access-requests');
+  return data;
+}
+
+export async function approveEditorRequest(requestId: number): Promise<EditorAccessRequestRow> {
+  const { data } = await backendApi.post<EditorAccessRequestRow>(
+    `/api/admin/editor-access-requests/${requestId}/approve`,
+  );
+  return data;
+}
+
+export async function rejectEditorRequest(requestId: number): Promise<EditorAccessRequestRow> {
+  const { data } = await backendApi.post<EditorAccessRequestRow>(
+    `/api/admin/editor-access-requests/${requestId}/reject`,
+  );
+  return data;
+}
+
+export async function fetchInviteCodes(): Promise<InviteCodeRow[]> {
+  const { data } = await backendApi.get<InviteCodeRow[]>('/api/admin/invite-codes');
+  return data;
+}
+
+export async function createInviteCode(params: {
+  role?: string;
+  maxUses?: number;
+  note?: string;
+}): Promise<InviteCodeRow> {
+  const { data } = await backendApi.post<InviteCodeRow>('/api/admin/invite-codes', params);
+  return data;
+}
+
+export async function deactivateInviteCode(id: number): Promise<InviteCodeRow> {
+  const { data } = await backendApi.post<InviteCodeRow>(`/api/admin/invite-codes/${id}/deactivate`);
   return data;
 }
 
@@ -109,12 +213,22 @@ export async function fetchCurrentUser(): Promise<AuthUserProfile> {
   return data;
 }
 
+export interface FactCheckDetail {
+  statement: string;
+  evidence: string;
+  supportScore: number;
+  passed: boolean;
+  method: 'semantic' | 'overlap' | 'skipped' | string;
+  slideTitle?: string;
+  evidenceNote?: string;
+}
+
 export interface EvaluationReport {
   id: number;
   projectId: number;
   pageId?: number;
   outlineLogicScore: number;
-  factualAccuracyScore: number;
+  factualAccuracyScore?: number | null;
   infoDensityScore: number;
   languageExpressionScore: number;
   totalScore: number;
@@ -125,14 +239,55 @@ export interface EvaluationReport {
   autoSourceCoverageScore?: number;
   autoTotalScore?: number;
   factVerificationRate?: number;
+  factCheckDetails?: FactCheckDetail[];
+  qualityGateStatus?: 'PASS' | 'WARN' | 'FAIL' | 'UNKNOWN' | string;
+  qualityGateReasons?: string[];
+  calibrationAgreeWithAuto?: boolean | null;
+  calibrationDeltaFromAuto?: Record<string, number>;
   recommendations?: string;
   userFeedback?: string;
   evaluationTime: string;
 }
 
+export interface EvaluationProjectSnapshot {
+  projectId: number;
+  projectTitle: string;
+  latestReportId: number;
+  autoTotalScore?: number;
+  autoSourceCoverageScore?: number;
+  qualityGateStatus?: string;
+  evaluationTime: string;
+}
+
+export interface EvaluationCalibrationRecord {
+  reportId: number;
+  projectId: number;
+  agreeWithAuto?: boolean;
+  deltaFromAuto?: Record<string, number>;
+  userFeedback?: string;
+  evaluationTime: string;
+}
+
+export interface EvaluationDashboard {
+  projectCount: number;
+  reportCount: number;
+  avgAutoTotalScore?: number;
+  avgFactVerificationRate?: number;
+  qualityGatePassCount: number;
+  qualityGateWarnCount: number;
+  qualityGateFailCount: number;
+  calibrationTotal: number;
+  calibrationAgreeCount: number;
+  calibrationDisagreeCount: number;
+  recentProjects: EvaluationProjectSnapshot[];
+  calibrationRecords: EvaluationCalibrationRecord[];
+}
+
 export interface SystemConfig {
   id?: number;
   llmModel: string;
+  /** 服务器默认 OpenAI 兼容接口 Base URL */
+  llmBaseUrl?: string;
   temperature: number;
   maxTokens: number;
   topP: number;
@@ -142,6 +297,24 @@ export interface SystemConfig {
   slidePromptTemplate: string;
   /** 为 true 时每份大纲强制包含 Q&A 页 */
   outlineIncludeQaSlide: boolean;
+  /** 正文生成后 Tier1/Tier2 自纠错 */
+  selfCorrectionEnabled?: boolean;
+  selfCorrectionTier1AutoBelow?: number;
+  selfCorrectionTier1FactBelow?: number;
+  selfCorrectionTier2AutoBelow?: number;
+  selfCorrectionTier2FactBelow?: number;
+  /** 管理员维护的 DeepSeek API 密钥预设 */
+  llmApiKeyPresets?: LlmApiKeyPreset[];
+}
+
+export interface LlmApiKeyPreset {
+  id: string;
+  label: string;
+  maskedKey?: string;
+  /** 仅管理员配置页读写 */
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
 }
 
 export interface ExternalSourceDocument {
@@ -169,6 +342,9 @@ export interface ProjectOutlineResponse {
   title: string;
   /** 目标演讲时长（分钟），5–60 */
   presentationDurationMinutes?: number;
+  /** 用户指定的演示角色；空则生成时由 AI 推断 */
+  presenterRole?: string | null;
+  llmApiKeyPresetId?: string | null;
   slides: OutlineSlideDto[];
 }
 
@@ -180,6 +356,10 @@ export interface ProjectSummary {
   hasScript?: boolean;
   hasPpt?: boolean;
   stage?: string;
+  templateProject?: boolean;
+  ownerUserId?: number | null;
+  ownerUsername?: string | null;
+  ownerDisplayName?: string | null;
 }
 
 export interface ProjectDetailSlide {
@@ -201,6 +381,8 @@ export interface ProjectDetailResponse {
   title: string;
   theme: string;
   presentationDurationMinutes?: number;
+  presenterRole?: string | null;
+  llmApiKeyPresetId?: string | null;
   createdAt: string;
   updatedAt: string;
   slides: ProjectDetailSlide[];
@@ -227,7 +409,18 @@ export interface UpsertOutlinePayload {
 export interface GenerateSlidesPayload {
   inputType?: string;
   inputContent?: string;
+  llmApiKeyPresetId?: string | null;
+  llmApiKeyOverride?: string;
+  llmBaseUrlOverride?: string;
+  llmModelOverride?: string;
 }
+
+export type LlmRequestFields = {
+  llmApiKeyPresetId?: string;
+  llmApiKeyOverride?: string;
+  llmBaseUrlOverride?: string;
+  llmModelOverride?: string;
+};
 
 export interface SlideContentResponse {
   content: string[];
@@ -259,7 +452,7 @@ export interface SearchResponse {
 export interface CreateEvaluationPayload {
   pageId?: number;
   outlineLogicScore: number;
-  factualAccuracyScore: number;
+  factualAccuracyScore?: number;
   infoDensityScore: number;
   languageExpressionScore: number;
   recommendations?: string;
@@ -268,6 +461,14 @@ export interface CreateEvaluationPayload {
 
 export const fetchEvaluationReports = async (projectId: number): Promise<EvaluationReport[]> => {
   const response = await backendApi.get<EvaluationReport[]>(`/api/projects/${projectId}/evaluations`);
+  return response.data;
+};
+
+/** 触发整项目自动评估（无需重生正文） */
+export const triggerAutoEvaluation = async (projectId: number): Promise<EvaluationReport> => {
+  const response = await backendApi.post<EvaluationReport>(
+    `/api/projects/${projectId}/evaluations/auto`,
+  );
   return response.data;
 };
 
@@ -296,6 +497,22 @@ export const submitEvaluationCalibration = async (
   return response.data;
 };
 
+export const fetchEvaluationDashboard = async (): Promise<EvaluationDashboard> => {
+  const response = await backendApi.get<EvaluationDashboard>('/api/evaluations/dashboard');
+  return response.data;
+};
+
+/** 单页自动评估（pageId = slideId） */
+export const submitPageEvaluation = async (
+  projectId: number,
+  slideId: number,
+): Promise<EvaluationReport> => {
+  const response = await backendApi.post<EvaluationReport>(
+    `/api/projects/${projectId}/slides/${slideId}/evaluations`,
+  );
+  return response.data;
+};
+
 export const fetchSystemConfig = async (): Promise<SystemConfig> => {
   const response = await backendApi.get<SystemConfig>('/api/config');
   return response.data;
@@ -312,12 +529,34 @@ export const resetSystemConfigToDefaults = async (): Promise<SystemConfig> => {
   return response.data;
 };
 
+/** 生成页可选：管理员配置的 DeepSeek 密钥预设（脱敏） */
+export const fetchLlmApiKeyPresets = async (): Promise<LlmApiKeyPreset[]> => {
+  try {
+    const response = await backendApi.get<LlmApiKeyPreset[]>('/api/config/llm-api-key-presets');
+    return response.data;
+  } catch {
+    // 预设列表为可选能力；加载失败时不阻断「服务器默认」创建流程
+    return [];
+  }
+};
+
 const LIST_PROJECTS_TIMEOUT_MS = 30_000;
 
 export const listProjects = async (): Promise<ProjectSummary[]> => {
   const response = await backendApi.get<ProjectSummary[]>('/api/projects', {
     timeout: LIST_PROJECTS_TIMEOUT_MS,
   });
+  return response.data;
+};
+
+export const updateProjectTemplate = async (
+  projectId: number,
+  templateProject: boolean,
+): Promise<ProjectSummary> => {
+  const response = await backendApi.patch<ProjectSummary>(
+    `/api/admin/projects/${projectId}/template`,
+    { templateProject },
+  );
   return response.data;
 };
 
@@ -370,10 +609,15 @@ export const fetchProjectForSlides = async (projectId: number): Promise<ProjectD
 export const createProjectFromTopic = async (
   topic: string,
   presentationDurationMinutes: number = DEFAULT_PRESENTATION_DURATION_MINUTES,
+  presenterRole?: string,
+  llmApiKey?: LlmRequestFields,
 ): Promise<ProjectOutlineResponse> => {
+  const role = presenterRole?.trim();
   const response = await backendApi.post<ProjectOutlineResponse>('/api/projects/topic', {
     topic,
     presentationDurationMinutes,
+    ...(role ? { presenterRole: role } : {}),
+    ...llmApiKey,
   });
   return response.data;
 };
@@ -382,11 +626,16 @@ export const createProjectFromDocument = async (
   title: string,
   text: string,
   presentationDurationMinutes: number = DEFAULT_PRESENTATION_DURATION_MINUTES,
+  presenterRole?: string,
+  llmApiKey?: LlmRequestFields,
 ): Promise<ProjectOutlineResponse> => {
+  const role = presenterRole?.trim();
   const response = await backendApi.post<ProjectOutlineResponse>('/api/projects/document', {
     title,
     text,
     presentationDurationMinutes,
+    ...(role ? { presenterRole: role } : {}),
+    ...llmApiKey,
   });
   return response.data;
 };
@@ -395,8 +644,26 @@ export const createProjectFromDocument = async (
 export const uploadDocumentFile = async (
   formData: FormData,
   presentationDurationMinutes: number = DEFAULT_PRESENTATION_DURATION_MINUTES,
+  presenterRole?: string,
+  llmApiKey?: LlmRequestFields,
 ): Promise<ProjectOutlineResponse> => {
   formData.append('presentationDurationMinutes', String(presentationDurationMinutes));
+  const role = presenterRole?.trim();
+  if (role) {
+    formData.append('presenterRole', role);
+  }
+  if (llmApiKey?.llmApiKeyPresetId) {
+    formData.append('llmApiKeyPresetId', llmApiKey.llmApiKeyPresetId);
+  }
+  if (llmApiKey?.llmApiKeyOverride) {
+    formData.append('llmApiKeyOverride', llmApiKey.llmApiKeyOverride);
+  }
+  if (llmApiKey?.llmBaseUrlOverride) {
+    formData.append('llmBaseUrlOverride', llmApiKey.llmBaseUrlOverride);
+  }
+  if (llmApiKey?.llmModelOverride) {
+    formData.append('llmModelOverride', llmApiKey.llmModelOverride);
+  }
   const response = await backendApi.post<ProjectOutlineResponse>('/api/projects/document/upload', formData, {
     timeout: SLIDE_PIPELINE_AXIOS_TIMEOUT_MS,
   });
@@ -415,6 +682,11 @@ export interface RegenerateOutlinePayload {
   presentationDurationMinutes?: number;
   inputType?: 'topic' | 'document';
   inputContent?: string;
+  presenterRole?: string | null;
+  llmApiKeyPresetId?: string | null;
+  llmApiKeyOverride?: string;
+  llmBaseUrlOverride?: string;
+  llmModelOverride?: string;
 }
 
 /** 在已有项目上按主题重新生成大纲 */
@@ -429,6 +701,11 @@ export const regenerateProjectOutline = async (
       presentationDurationMinutes: payload.presentationDurationMinutes,
       inputType: payload.inputType ?? 'topic',
       inputContent: payload.inputContent ?? payload.topic,
+      ...(payload.presenterRole !== undefined ? { presenterRole: payload.presenterRole ?? '' } : {}),
+      ...(payload.llmApiKeyPresetId !== undefined ? { llmApiKeyPresetId: payload.llmApiKeyPresetId ?? '' } : {}),
+      ...(payload.llmApiKeyOverride ? { llmApiKeyOverride: payload.llmApiKeyOverride } : {}),
+      ...(payload.llmBaseUrlOverride ? { llmBaseUrlOverride: payload.llmBaseUrlOverride } : {}),
+      ...(payload.llmModelOverride ? { llmModelOverride: payload.llmModelOverride } : {}),
     },
     { timeout: SLIDE_PIPELINE_AXIOS_TIMEOUT_MS },
   );

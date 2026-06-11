@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Menu, X, FileText, RotateCcw, Settings, LogOut, User } from 'lucide-react';
+import { Menu, X, FileText, RotateCcw, Settings, LogOut, User, UserCog } from 'lucide-react';
 import type { AppStep } from '../App';
 import { canGoToWorkflowStep, type WorkflowProgress, type WorkflowStep } from '@/lib/workflowSteps';
 
@@ -9,6 +9,7 @@ interface NavbarProps {
   onNavigate: (step: AppStep) => void;
   onReset: () => void;
   onOpenConfig: () => void;
+  onOpenUsers?: () => void;
   userDisplayName?: string;
   userRoleLabel?: string;
   canManageConfig?: boolean;
@@ -21,6 +22,7 @@ const Navbar = ({
   onNavigate,
   onReset,
   onOpenConfig,
+  onOpenUsers,
   userDisplayName,
   userRoleLabel,
   canManageConfig = false,
@@ -151,6 +153,15 @@ const Navbar = ({
 
             {/* Actions */}
             <div className="flex items-center gap-2">
+              {canManageConfig && onOpenUsers && (
+                <button
+                  onClick={onOpenUsers}
+                  className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-sm text-[#1f1f1f]/60 hover:text-[#3898ec] transition-colors"
+                >
+                  <UserCog className="w-4 h-4" />
+                  用户管理
+                </button>
+              )}
               {canManageConfig && (
                 <button
                   onClick={onOpenConfig}

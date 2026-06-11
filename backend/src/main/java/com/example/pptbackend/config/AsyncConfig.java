@@ -4,6 +4,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.security.task.DelegatingSecurityContextAsyncTaskExecutor;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
@@ -24,7 +25,8 @@ public class AsyncConfig {
         executor.setQueueCapacity(100);
         executor.setThreadNamePrefix("ppt-deferred-index-");
         executor.initialize();
-        return executor;
+        // 正文生成 / 大纲异步索引在后台线程执行，须继承发起请求时的登录上下文，否则多租户校验与 RAG 检索会失败。
+        return new DelegatingSecurityContextAsyncTaskExecutor(executor);
     }
 
     /**

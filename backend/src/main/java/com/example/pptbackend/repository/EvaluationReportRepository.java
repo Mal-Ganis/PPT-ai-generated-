@@ -11,6 +11,10 @@ public interface EvaluationReportRepository extends JpaRepository<EvaluationRepo
 
     List<EvaluationReport> findByProjectIdOrderByEvaluationTimeDesc(Long projectId);
 
+    List<EvaluationReport> findAllByOrderByEvaluationTimeDesc();
+
+    List<EvaluationReport> findByCalibrationAgreeWithAutoIsNotNullOrderByEvaluationTimeDesc();
+
     boolean existsByProjectId(Long projectId);
 
     void deleteByProjectId(Long projectId);

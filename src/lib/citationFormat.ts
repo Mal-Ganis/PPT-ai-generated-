@@ -1,6 +1,8 @@
 import type { IndexSearchResult } from './backend';
 import type { CitationFlowStep } from './citationReturnContext';
 
+import { isPlaceholderSourceLine } from './citationHints';
+
 const URL_PATTERN = /https?:\/\/[^\s|"<>]+/gi;
 const JSON_OBJECT_LIKE = /^\s*\{[\s\S]*\}\s*$/;
 
@@ -59,6 +61,7 @@ export function normalizeSourceLines(sources: string[]): string[] {
   for (const line of sources ?? []) {
     const normalized = normalizeSourceLine(line);
     if (!normalized || seen.has(normalized)) continue;
+    if (isPlaceholderSourceLine(normalized)) continue;
     seen.add(normalized);
     out.push(normalized);
   }

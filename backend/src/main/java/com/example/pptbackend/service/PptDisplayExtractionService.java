@@ -1,6 +1,7 @@
 package com.example.pptbackend.service;
 
 import com.example.pptbackend.dto.SystemConfigDto;
+import com.example.pptbackend.model.Project;
 import com.example.pptbackend.model.Slide;
 import com.example.pptbackend.repository.ProjectRepository;
 import com.example.pptbackend.repository.SlideRepository;
@@ -37,6 +38,7 @@ public class PptDisplayExtractionService {
     private final DeepseekChatClient deepseekChatClient;
     private final ProjectRepository projectRepository;
     private final SlideRepository slideRepository;
+    private final ProjectAccessService projectAccessService;
     private final String extractionModel;
 
     public PptDisplayExtractionService(ObjectMapper objectMapper,
@@ -44,12 +46,14 @@ public class PptDisplayExtractionService {
                                        DeepseekChatClient deepseekChatClient,
                                        ProjectRepository projectRepository,
                                        SlideRepository slideRepository,
+                                       ProjectAccessService projectAccessService,
                                        @Value("${generation.ppt-display-model:deepseek-chat}") String extractionModel) {
         this.objectMapper = objectMapper;
         this.systemConfigService = systemConfigService;
         this.deepseekChatClient = deepseekChatClient;
         this.projectRepository = projectRepository;
         this.slideRepository = slideRepository;
+        this.projectAccessService = projectAccessService;
         this.extractionModel = extractionModel != null && !extractionModel.isBlank()
             ? extractionModel.trim() : "deepseek-chat";
     }
@@ -99,12 +103,11 @@ public class PptDisplayExtractionService {
 
     @Transactional
     public List<String> extractAndSaveSlide(Long projectId, Long slideId) {
+        Project project = projectAccessService.requireReadableProject(projectId);
+        projectAccessService.assertWritable(project);
         Slide slide = slideRepository.findByIdAndProject_Id(slideId, projectId)
             .orElseThrow(() -> new EntityNotFoundException("Slide not found: " + slideId));
-        int duration = PresentationDurationPlanner.clampMinutes(
-            projectRepository.findById(projectId)
-                .map(p -> p.getPresentationDurationMinutes())
-                .orElse(PresentationDurationPlanner.DEFAULT_MINUTES));
+        int duration = PresentationDurationPlanner.clampMinutes(project.getPresentationDurationMinutes());
         List<String> extracted = extractForSlide(slide, duration);
         slide.setPptBullets(extracted);
         slideRepository.save(slide);

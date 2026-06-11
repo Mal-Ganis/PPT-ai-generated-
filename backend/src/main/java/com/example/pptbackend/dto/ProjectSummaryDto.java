@@ -14,6 +14,12 @@ public class ProjectSummaryDto {
     private boolean hasPpt;
     /** 列表展示：仅大纲 / 已有正文 / 可预览 */
     private String stage;
+    /** 是否为管理员标记的模板（只读访客可见） */
+    private boolean templateProject;
+    /** 归属用户；管理员列表展示用 */
+    private Long ownerUserId;
+    private String ownerUsername;
+    private String ownerDisplayName;
 
     public Long getId() {
         return id;
@@ -69,5 +75,37 @@ public class ProjectSummaryDto {
 
     public void setStage(String stage) {
         this.stage = stage;
+    }
+
+    public boolean isTemplateProject() {
+        return templateProject;
+    }
+
+    public void setTemplateProject(boolean templateProject) {
+        this.templateProject = templateProject;
+    }
+
+    public Long getOwnerUserId() {
+        return ownerUserId;
+    }
+
+    public void setOwnerUserId(Long ownerUserId) {
+        this.ownerUserId = ownerUserId;
+    }
+
+    public String getOwnerUsername() {
+        return ownerUsername;
+    }
+
+    public void setOwnerUsername(String ownerUsername) {
+        this.ownerUsername = ownerUsername;
+    }
+
+    public String getOwnerDisplayName() {
+        return ownerDisplayName;
+    }
+
+    public void setOwnerDisplayName(String ownerDisplayName) {
+        this.ownerDisplayName = ownerDisplayName;
     }
 }

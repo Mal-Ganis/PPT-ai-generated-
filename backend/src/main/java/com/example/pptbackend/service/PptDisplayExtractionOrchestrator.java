@@ -3,9 +3,7 @@ package com.example.pptbackend.service;
 import com.example.pptbackend.dto.PptDisplayExtractionStatusDto;
 import com.example.pptbackend.dto.PptDisplayExtractionStatusDto.Phase;
 import com.example.pptbackend.model.Slide;
-import com.example.pptbackend.repository.ProjectRepository;
 import com.example.pptbackend.repository.SlideRepository;
-import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -22,26 +20,25 @@ public class PptDisplayExtractionOrchestrator {
     private static final Logger log = LoggerFactory.getLogger(PptDisplayExtractionOrchestrator.class);
 
     private final PptDisplayExtractionService extractionService;
-    private final ProjectRepository projectRepository;
+    private final ProjectAccessService projectAccessService;
     private final SlideRepository slideRepository;
     private final Executor pptTaskExecutor;
     private final ConcurrentHashMap<Long, PptDisplayExtractionStatusDto> states = new ConcurrentHashMap<>();
 
     public PptDisplayExtractionOrchestrator(PptDisplayExtractionService extractionService,
-                                            ProjectRepository projectRepository,
+                                            ProjectAccessService projectAccessService,
                                             SlideRepository slideRepository,
                                             @Qualifier("pptTaskExecutor") Executor pptTaskExecutor) {
         this.extractionService = extractionService;
-        this.projectRepository = projectRepository;
+        this.projectAccessService = projectAccessService;
         this.slideRepository = slideRepository;
         this.pptTaskExecutor = pptTaskExecutor;
     }
 
     @Transactional(readOnly = true)
     public PptDisplayExtractionStatusDto start(Long projectId, boolean force) {
-        if (!projectRepository.existsById(projectId)) {
-            throw new EntityNotFoundException("Project not found: " + projectId);
-        }
+        var project = projectAccessService.requireReadableProject(projectId);
+        projectAccessService.assertWritable(project);
 
         PptDisplayExtractionStatusDto running = states.get(projectId);
         if (running != null && running.getPhase() == Phase.RUNNING) {
@@ -62,6 +59,7 @@ public class PptDisplayExtractionOrchestrator {
     }
 
     public PptDisplayExtractionStatusDto getStatus(Long projectId) {
+        projectAccessService.requireReadableProject(projectId);
         PptDisplayExtractionStatusDto cached = states.get(projectId);
         if (cached == null) {
             PptDisplayExtractionStatusDto idle = new PptDisplayExtractionStatusDto();

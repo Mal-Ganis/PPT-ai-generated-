@@ -10,9 +10,11 @@ import com.example.pptbackend.dto.RegenerateOutlineRequest;
 import com.example.pptbackend.dto.UpdateSlideRequest;
 import com.example.pptbackend.model.Project;
 import com.example.pptbackend.model.Slide;
+import com.example.pptbackend.model.User;
 import com.example.pptbackend.repository.EvaluationReportRepository;
 import com.example.pptbackend.repository.ProjectRepository;
 import com.example.pptbackend.repository.SlideRepository;
+import com.example.pptbackend.repository.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,6 +33,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 @Service
@@ -50,7 +53,9 @@ public class ProjectService {
     private final IndexSegmentService indexSegmentService;
     private final ProjectAccessService projectAccessService;
     private final CurrentUserService currentUserService;
+    private final UserRepository userRepository;
     private final SlideSourceCitationService slideSourceCitationService;
+    private final LlmApiKeyService llmApiKeyService;
 
     @Value("${outline.use-external-retrieval:true}")
     private boolean outlineUseExternalRetrieval;
@@ -73,7 +78,9 @@ public class ProjectService {
                           IndexSegmentService indexSegmentService,
                           ProjectAccessService projectAccessService,
                           CurrentUserService currentUserService,
-                          SlideSourceCitationService slideSourceCitationService) {
+                          UserRepository userRepository,
+                          SlideSourceCitationService slideSourceCitationService,
+                          LlmApiKeyService llmApiKeyService) {
         this.projectRepository = projectRepository;
         this.slideRepository = slideRepository;
         this.evaluationReportRepository = evaluationReportRepository;
@@ -86,7 +93,9 @@ public class ProjectService {
         this.indexSegmentService = indexSegmentService;
         this.projectAccessService = projectAccessService;
         this.currentUserService = currentUserService;
+        this.userRepository = userRepository;
         this.slideSourceCitationService = slideSourceCitationService;
+        this.llmApiKeyService = llmApiKeyService;
     }
 
     @Transactional
@@ -96,12 +105,45 @@ public class ProjectService {
 
     @Transactional
     public ProjectOutlineResponse createProjectFromTopic(String topic, Integer presentationDurationMinutes) {
+        return createProjectFromTopic(topic, presentationDurationMinutes, null);
+    }
+
+    @Transactional
+    public ProjectOutlineResponse createProjectFromTopic(String topic,
+                                                         Integer presentationDurationMinutes,
+                                                         String presenterRole) {
+        return createProjectFromTopic(topic, presentationDurationMinutes, presenterRole, null, null, null, null);
+    }
+
+    @Transactional
+    public ProjectOutlineResponse createProjectFromTopic(String topic,
+                                                         Integer presentationDurationMinutes,
+                                                         String presenterRole,
+                                                         String llmApiKeyPresetId,
+                                                         String llmApiKeyOverride) {
+        return createProjectFromTopic(
+            topic, presentationDurationMinutes, presenterRole,
+            llmApiKeyPresetId, llmApiKeyOverride, null, null);
+    }
+
+    @Transactional
+    public ProjectOutlineResponse createProjectFromTopic(String topic,
+                                                         Integer presentationDurationMinutes,
+                                                         String presenterRole,
+                                                         String llmApiKeyPresetId,
+                                                         String llmApiKeyOverride,
+                                                         String llmBaseUrlOverride,
+                                                         String llmModelOverride) {
         if (topic == null || topic.isBlank()) {
             throw new IllegalArgumentException("Topic is required");
         }
         String clean = topic.trim();
+        String role = PresenterRolePromptBuilder.sanitize(presenterRole);
+        String presetId = normalizePresetId(llmApiKeyPresetId);
         int minutes = PresentationDurationPlanner.clampMinutes(presentationDurationMinutes);
         Long projectId = createEmptyProject(clean, clean, minutes);
+        applyPresenterRole(projectId, role);
+        applyLlmApiKeyPreset(projectId, presetId);
 
         String augmented = clean;
         if (outlineUseExternalRetrieval) {
@@ -126,7 +168,12 @@ public class ProjectService {
             }
         }
 
-        ProjectOutlineResponse outline = outlineGenerationService.generateOutline(augmented, minutes);
+        final String outlinePrompt = augmented;
+        final int outlineMinutes = minutes;
+        final String outlineRole = role;
+        ProjectOutlineResponse outline = runWithLlmConnection(
+            presetId, llmApiKeyOverride, llmBaseUrlOverride, llmModelOverride,
+            () -> outlineGenerationService.generateOutline(outlinePrompt, outlineMinutes, outlineRole));
         CreateProjectRequest request = new CreateProjectRequest();
         request.setTitle(outline.getTitle() != null ? outline.getTitle() : clean);
         request.setTheme(clean);
@@ -198,7 +245,14 @@ public class ProjectService {
         String inputContent = request != null ? request.getInputContent() : null;
         String augmented = buildAugmentedOutlinePrompt(projectId, cleanTopic, inputType, inputContent);
 
-        ProjectOutlineResponse outline = outlineGenerationService.generateOutline(augmented, minutes);
+        String presenterRole = resolvePresenterRoleForRegenerate(project, request);
+        String presetId = resolveLlmPresetForRegenerate(project, request);
+        ProjectOutlineResponse outline = runWithLlmConnection(
+            presetId,
+            request != null ? request.getLlmApiKeyOverride() : null,
+            request != null ? request.getLlmBaseUrlOverride() : null,
+            request != null ? request.getLlmModelOverride() : null,
+            () -> outlineGenerationService.generateOutline(augmented, minutes, presenterRole));
         CreateProjectRequest upsert = new CreateProjectRequest();
         upsert.setTitle(outline.getTitle() != null ? outline.getTitle() : cleanTopic);
         upsert.setTheme(cleanTopic);
@@ -287,7 +341,7 @@ public class ProjectService {
             slide.setPptBullets(request.getPptBullets());
         }
         if (request.getSources() != null) {
-            slide.setSources(request.getSources());
+            slide.setSources(slideSourceCitationService.formatSourceLinesForStorage(request.getSources()));
         }
 
         slideRepository.save(slide);
@@ -301,12 +355,49 @@ public class ProjectService {
 
     @Transactional
     public ProjectOutlineResponse createProjectFromDocument(String title, String rawText, Integer presentationDurationMinutes) {
+        return createProjectFromDocument(title, rawText, presentationDurationMinutes, null);
+    }
+
+    @Transactional
+    public ProjectOutlineResponse createProjectFromDocument(String title,
+                                                            String rawText,
+                                                            Integer presentationDurationMinutes,
+                                                            String presenterRole) {
+        return createProjectFromDocument(
+            title, rawText, presentationDurationMinutes, presenterRole, null, null, null, null);
+    }
+
+    @Transactional
+    public ProjectOutlineResponse createProjectFromDocument(String title,
+                                                            String rawText,
+                                                            Integer presentationDurationMinutes,
+                                                            String presenterRole,
+                                                            String llmApiKeyPresetId,
+                                                            String llmApiKeyOverride) {
+        return createProjectFromDocument(
+            title, rawText, presentationDurationMinutes, presenterRole,
+            llmApiKeyPresetId, llmApiKeyOverride, null, null);
+    }
+
+    @Transactional
+    public ProjectOutlineResponse createProjectFromDocument(String title,
+                                                            String rawText,
+                                                            Integer presentationDurationMinutes,
+                                                            String presenterRole,
+                                                            String llmApiKeyPresetId,
+                                                            String llmApiKeyOverride,
+                                                            String llmBaseUrlOverride,
+                                                            String llmModelOverride) {
         if (rawText == null || rawText.isBlank()) {
             throw new IllegalArgumentException("Document text is required");
         }
         String safeTitle = title != null && !title.isBlank() ? title : "文档演示文稿";
+        String role = PresenterRolePromptBuilder.sanitize(presenterRole);
+        String presetId = normalizePresetId(llmApiKeyPresetId);
         int minutes = PresentationDurationPlanner.clampMinutes(presentationDurationMinutes);
         Long projectId = createEmptyProject(safeTitle, truncate(rawText, 400), minutes);
+        applyPresenterRole(projectId, role);
+        applyLlmApiKeyPreset(projectId, presetId);
         documentIndexingService.indexPlainText(projectId, rawText);
         String rag = documentIndexingService.buildRagContext(projectId, safeTitle + "\n" + truncate(rawText, 1500));
         String augmented = safeTitle + "\n\n上传全文节选：\n" + truncate(rawText, 3200);
@@ -333,7 +424,12 @@ public class ProjectService {
                 log.warn("Document flow: external supplement failed: {}", e.getMessage());
             }
         }
-        ProjectOutlineResponse outline = outlineGenerationService.generateOutline(augmented, minutes);
+        final String outlinePrompt = augmented;
+        final int outlineMinutes = minutes;
+        final String outlineRole = role;
+        ProjectOutlineResponse outline = runWithLlmConnection(
+            presetId, llmApiKeyOverride, llmBaseUrlOverride, llmModelOverride,
+            () -> outlineGenerationService.generateOutline(outlinePrompt, outlineMinutes, outlineRole));
         CreateProjectRequest request = new CreateProjectRequest();
         request.setTitle(outline.getTitle() != null ? outline.getTitle() : safeTitle);
         request.setTheme(safeTitle);
@@ -352,6 +448,8 @@ public class ProjectService {
         response.setTitle(detail.getTitle());
         response.setPresentationDurationMinutes(
             PresentationDurationPlanner.clampMinutes(project.getPresentationDurationMinutes()));
+        response.setPresenterRole(project.getPresenterRole());
+        response.setLlmApiKeyPresetId(project.getLlmApiKeyPresetId());
         for (ProjectDetailResponse.SlideItem slideItem : detail.getSlides()) {
             ProjectOutlineResponse.OutlineSlide outlineSlide = new ProjectOutlineResponse.OutlineSlide();
             outlineSlide.setSlideId(slideItem.getId());
@@ -367,14 +465,7 @@ public class ProjectService {
 
     @Transactional(readOnly = true)
     public List<ProjectSummaryDto> listProjects() {
-        Sort sort = Sort.by(Sort.Direction.DESC, "updatedAt");
-        List<Project> projects;
-        if (currentUserService.isAdmin()) {
-            projects = projectRepository.findAll(sort);
-        } else {
-            Long userId = currentUserService.requireAuthenticated().getId();
-            projects = projectRepository.findByOwnerUserIdOrOwnerUserIdIsNull(userId, sort);
-        }
+        List<Project> projects = projectAccessService.listProjectsForCurrentUser();
         if (projects.isEmpty()) {
             return List.of();
         }
@@ -386,6 +477,7 @@ public class ProjectService {
         }
         Map<Long, ProjectWorkflowStageService.StageSnapshot> stages =
             projectWorkflowStageService.evaluateProjects(slidesByProject);
+        Map<Long, User> ownersById = loadOwnersById(projects);
         return projects.stream()
             .map(project -> {
                 ProjectSummaryDto dto = new ProjectSummaryDto();
@@ -399,9 +491,37 @@ public class ProjectService {
                 dto.setHasScript(stage.hasGeneratedContent());
                 dto.setHasPpt(stage.hasReadyPreview());
                 dto.setStage(stage.stageLabel());
+                dto.setTemplateProject(project.isTemplateProject());
+                applyOwnerSummary(dto, project.getOwnerUserId(), ownersById);
                 return dto;
             })
             .collect(Collectors.toList());
+    }
+
+    private Map<Long, User> loadOwnersById(List<Project> projects) {
+        List<Long> ownerIds = projects.stream()
+            .map(Project::getOwnerUserId)
+            .filter(Objects::nonNull)
+            .distinct()
+            .toList();
+        if (ownerIds.isEmpty()) {
+            return Map.of();
+        }
+        return userRepository.findAllById(ownerIds).stream()
+            .collect(Collectors.toMap(User::getId, user -> user));
+    }
+
+    private static void applyOwnerSummary(ProjectSummaryDto dto, Long ownerUserId, Map<Long, User> ownersById) {
+        dto.setOwnerUserId(ownerUserId);
+        if (ownerUserId == null) {
+            return;
+        }
+        User owner = ownersById.get(ownerUserId);
+        if (owner == null) {
+            return;
+        }
+        dto.setOwnerUsername(owner.getUsername());
+        dto.setOwnerDisplayName(owner.getDisplayName());
     }
 
     @Transactional
@@ -432,6 +552,25 @@ public class ProjectService {
         return ids.size();
     }
 
+    @Transactional
+    public ProjectSummaryDto updateProjectTemplate(Long projectId, boolean templateProject) {
+        if (!currentUserService.isAdmin()) {
+            throw new org.springframework.security.access.AccessDeniedException("仅系统管理员可设置模板项目");
+        }
+        Project project = projectRepository.findById(projectId)
+            .orElseThrow(() -> new EntityNotFoundException("Project not found: " + projectId));
+        project.setTemplateProject(templateProject);
+        projectRepository.save(project);
+        ProjectSummaryDto dto = new ProjectSummaryDto();
+        dto.setId(project.getId());
+        dto.setTitle(project.getTitle());
+        dto.setCreatedAt(project.getCreatedAt());
+        dto.setUpdatedAt(project.getUpdatedAt());
+        dto.setTemplateProject(project.isTemplateProject());
+        applyOwnerSummary(dto, project.getOwnerUserId(), loadOwnersById(List.of(project)));
+        return dto;
+    }
+
     @Transactional(readOnly = true)
     public ProjectDetailResponse getProjectById(Long id) {
         return getProjectById(id, false);
@@ -447,6 +586,8 @@ public class ProjectService {
         response.setTheme(project.getTheme());
         response.setPresentationDurationMinutes(
             PresentationDurationPlanner.clampMinutes(project.getPresentationDurationMinutes()));
+        response.setPresenterRole(project.getPresenterRole());
+        response.setLlmApiKeyPresetId(project.getLlmApiKeyPresetId());
         response.setCreatedAt(project.getCreatedAt());
         response.setUpdatedAt(project.getUpdatedAt());
 
@@ -517,6 +658,9 @@ public class ProjectService {
     /**
      * 事务成功提交后再异步写入检索片段，避免阻塞大纲响应；列表做快照以免调用方后续修改。
      */
+    /**
+     * 事务成功提交后再异步写入检索片段，避免阻塞大纲响应；列表做快照以免调用方后续修改。
+     */
     private void scheduleExternalSnippetIndexAfterCommit(Long projectId, List<ExternalSourceDocument> docs) {
         if (projectId == null || docs == null || docs.isEmpty()) {
             return;
@@ -532,6 +676,62 @@ public class ProjectService {
             });
         } else {
             run.run();
+        }
+    }
+
+    private void applyPresenterRole(Long projectId, String presenterRole) {
+        Project project = projectRepository.findById(projectId)
+            .orElseThrow(() -> new EntityNotFoundException("Project not found: " + projectId));
+        project.setPresenterRole(presenterRole);
+        projectRepository.save(project);
+    }
+
+    private String resolvePresenterRoleForRegenerate(Project project, RegenerateOutlineRequest request) {
+        if (request != null && request.getPresenterRole() != null) {
+            String role = PresenterRolePromptBuilder.sanitize(request.getPresenterRole());
+            project.setPresenterRole(role);
+            projectRepository.save(project);
+            return role;
+        }
+        return project.getPresenterRole();
+    }
+
+    private String resolveLlmPresetForRegenerate(Project project, RegenerateOutlineRequest request) {
+        if (request != null && request.getLlmApiKeyPresetId() != null) {
+            String presetId = normalizePresetId(request.getLlmApiKeyPresetId());
+            project.setLlmApiKeyPresetId(presetId);
+            projectRepository.save(project);
+            return presetId;
+        }
+        return project.getLlmApiKeyPresetId();
+    }
+
+    private void applyLlmApiKeyPreset(Long projectId, String presetId) {
+        Project project = projectRepository.findById(projectId)
+            .orElseThrow(() -> new EntityNotFoundException("Project not found: " + projectId));
+        project.setLlmApiKeyPresetId(presetId);
+        projectRepository.save(project);
+    }
+
+    private static String normalizePresetId(String presetId) {
+        if (presetId == null || presetId.isBlank()) {
+            return null;
+        }
+        return presetId.trim();
+    }
+
+    private <T> T runWithLlmConnection(String presetId,
+                                       String keyOverride,
+                                       String baseUrlOverride,
+                                       String modelOverride,
+                                       Supplier<T> action) {
+        LlmConnectionConfig conn = llmApiKeyService.resolveConnection(
+            presetId, keyOverride, baseUrlOverride, modelOverride);
+        LlmRequestContext.set(conn);
+        try {
+            return action.get();
+        } finally {
+            LlmRequestContext.clear();
         }
     }
 

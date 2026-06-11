@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FolderOpen, Loader2, Trash2 } from 'lucide-react';
+import { FolderOpen, Loader2, Star, Trash2 } from 'lucide-react';
 import { FlowExitNav } from '@/components/FlowExitNav';
+import { useAuth } from '@/contexts/AuthContext';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -17,6 +18,7 @@ import {
   deleteProject,
   deleteProjectsBatch,
   listProjects,
+  updateProjectTemplate,
   type ProjectSummary,
 } from '@/lib/backend';
 import type { WorkflowStep } from '@/lib/workflowSteps';
@@ -24,9 +26,20 @@ import type { WorkflowStep } from '@/lib/workflowSteps';
 interface ProjectsSectionProps {
   onOpenProject: (projectId: number, step?: WorkflowStep) => void;
   canDelete?: boolean;
+  flowBack?: { label: string; onClick: () => void };
 }
 
 type DeleteDialogMode = { kind: 'single'; project: ProjectSummary } | { kind: 'batch'; ids: number[] };
+
+function formatProjectOwnerLabel(project: ProjectSummary): string | null {
+  if (project.ownerUsername?.trim()) {
+    return project.ownerUsername.trim();
+  }
+  if (project.ownerUserId != null) {
+    return `用户 #${project.ownerUserId}`;
+  }
+  return null;
+}
 
 function summaryMeta(p: ProjectSummary) {
   const hasScript = p.hasScript === true;
@@ -35,7 +48,10 @@ function summaryMeta(p: ProjectSummary) {
   return { hasScript, hasPpt, stage };
 }
 
-const ProjectsSection = ({ onOpenProject, canDelete = true }: ProjectsSectionProps) => {
+const ProjectsSection = ({ onOpenProject, canDelete = true, flowBack }: ProjectsSectionProps) => {
+  const { user, canConfig } = useAuth();
+  const isViewer = user?.role === 'VIEWER';
+  const isAdmin = user?.role === 'ADMIN';
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -157,15 +173,39 @@ const ProjectsSection = ({ onOpenProject, canDelete = true }: ProjectsSectionPro
     return titles.join('、');
   }, [deleteDialog, projects]);
 
+  const toggleTemplate = async (project: ProjectSummary) => {
+    if (!canConfig) return;
+    setError('');
+    try {
+      const next = !project.templateProject;
+      const updated = await updateProjectTemplate(project.id, next);
+      setProjects((prev) =>
+        prev.map((p) =>
+          p.id === project.id
+            ? { ...p, templateProject: updated.templateProject ?? next }
+            : p,
+        ),
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '更新模板状态失败');
+    }
+  };
+
   return (
     <section className="min-h-screen pt-24 pb-16 bg-[#f3f3f3]">
       <div className="section-container">
         <div className="section-inner max-w-4xl">
-          <FlowExitNav className="mb-4" onProjectsPage />
+          <FlowExitNav className="mb-4" onProjectsPage flowBack={flowBack} />
           <div className="mb-8">
-            <h1 className="text-3xl font-bold text-[#1f1f1f]">历史项目</h1>
+            <h1 className="text-3xl font-bold text-[#1f1f1f]">
+              {isViewer ? '示例模板' : isAdmin ? '全部项目' : '我的项目'}
+            </h1>
             <p className="text-[#1f1f1f]/60 mt-2">
-              点击项目打开最近进度；可用顶部导航返回首页
+              {isViewer
+                ? '仅展示管理员标记的模板项目，可浏览预览与评估，无法修改。'
+                : isAdmin
+                  ? '可查看并编辑所有用户的项目；可将项目设为只读访客可见的模板。'
+                  : '仅显示您创建的项目；其他编辑者的项目不可见。'}
             </p>
           </div>
 
@@ -182,7 +222,11 @@ const ProjectsSection = ({ onOpenProject, canDelete = true }: ProjectsSectionPro
               </div>
             )}
             {!loading && !error && projects.length === 0 && (
-              <p className="text-[#1f1f1f]/60">暂无项目，请先在首页创建。</p>
+              <p className="text-[#1f1f1f]/60">
+                {isViewer
+                  ? '暂无模板项目，请联系管理员发布示例。'
+                  : '暂无项目，请先在首页创建。'}
+              </p>
             )}
             {!loading && projects.length > 0 && (
               <>
@@ -218,6 +262,7 @@ const ProjectsSection = ({ onOpenProject, canDelete = true }: ProjectsSectionPro
                 <ul className="space-y-3">
                   {projects.map((p) => {
                     const meta = summaryMeta(p);
+                    const ownerLabel = formatProjectOwnerLabel(p);
                     const checked = selectedIds.has(p.id);
                     return (
                       <li key={p.id}>
@@ -249,6 +294,11 @@ const ProjectsSection = ({ onOpenProject, canDelete = true }: ProjectsSectionPro
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <p className="font-semibold text-[#1f1f1f] truncate">{p.title}</p>
+                                  {p.templateProject && (
+                                    <span className="text-xs px-2 py-0.5 rounded-full shrink-0 bg-amber-50 text-amber-800">
+                                      模板
+                                    </span>
+                                  )}
                                   <span
                                     className={`text-xs px-2 py-0.5 rounded-full shrink-0 ${
                                       meta.hasPpt
@@ -262,13 +312,32 @@ const ProjectsSection = ({ onOpenProject, canDelete = true }: ProjectsSectionPro
                                   </span>
                                 </div>
                                 <p className="text-sm text-[#1f1f1f]/50 mt-1">
-                                  ID {p.id} · 更新于 {new Date(p.updatedAt).toLocaleString()}
+                                  ID {p.id}
+                                  {isAdmin && ownerLabel ? ` · 归属 ${ownerLabel}` : ''}
+                                  {' · 更新于 '}
+                                  {new Date(p.updatedAt).toLocaleString()}
                                 </p>
                                 <p className="text-xs text-[#3898ec] mt-1">
                                   点击标题打开最近进度，或使用下方按钮进入指定步骤
                                 </p>
                               </div>
                             </button>
+                            {canConfig && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className={`shrink-0 ${
+                                  p.templateProject
+                                    ? 'text-amber-700 hover:bg-amber-50'
+                                    : 'text-[#1f1f1f]/50 hover:text-amber-700 hover:bg-amber-50'
+                                }`}
+                                title={p.templateProject ? '取消模板（访客不可见）' : '设为模板（只读访客可见）'}
+                                onClick={() => void toggleTemplate(p)}
+                              >
+                                <Star className={`w-4 h-4 ${p.templateProject ? 'fill-current' : ''}`} />
+                              </Button>
+                            )}
                             {canDelete && (
                               <Button
                                 type="button"

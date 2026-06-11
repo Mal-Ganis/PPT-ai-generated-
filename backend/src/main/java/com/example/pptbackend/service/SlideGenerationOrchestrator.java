@@ -4,9 +4,7 @@ import com.example.pptbackend.dto.GenerateSlidesRequest;
 import com.example.pptbackend.dto.SlideGenerationStatusDto;
 import com.example.pptbackend.dto.SlideGenerationStatusDto.Phase;
 import com.example.pptbackend.model.Slide;
-import com.example.pptbackend.repository.ProjectRepository;
 import com.example.pptbackend.repository.SlideRepository;
-import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -24,19 +22,19 @@ public class SlideGenerationOrchestrator {
     private static final Logger log = LoggerFactory.getLogger(SlideGenerationOrchestrator.class);
 
     private final SlideGenerationService slideGenerationService;
-    private final ProjectRepository projectRepository;
+    private final ProjectAccessService projectAccessService;
     private final SlideRepository slideRepository;
     private final TransactionTemplate transactionTemplate;
     private final Executor pptTaskExecutor;
     private final ConcurrentHashMap<Long, SlideGenerationStatusDto> states = new ConcurrentHashMap<>();
 
     public SlideGenerationOrchestrator(SlideGenerationService slideGenerationService,
-                                       ProjectRepository projectRepository,
+                                       ProjectAccessService projectAccessService,
                                        SlideRepository slideRepository,
                                        TransactionTemplate transactionTemplate,
                                        @Qualifier("pptTaskExecutor") Executor pptTaskExecutor) {
         this.slideGenerationService = slideGenerationService;
-        this.projectRepository = projectRepository;
+        this.projectAccessService = projectAccessService;
         this.slideRepository = slideRepository;
         this.transactionTemplate = transactionTemplate;
         this.pptTaskExecutor = pptTaskExecutor;
@@ -44,9 +42,8 @@ public class SlideGenerationOrchestrator {
 
     @Transactional(readOnly = true)
     public SlideGenerationStatusDto start(Long projectId, GenerateSlidesRequest request) {
-        if (!projectRepository.existsById(projectId)) {
-            throw new EntityNotFoundException("Project not found: " + projectId);
-        }
+        var project = projectAccessService.requireReadableProject(projectId);
+        projectAccessService.assertWritable(project);
 
         SlideGenerationStatusDto running = states.get(projectId);
         if (running != null && running.getPhase() == Phase.RUNNING) {
@@ -69,6 +66,7 @@ public class SlideGenerationOrchestrator {
 
     @Transactional(readOnly = true)
     public SlideGenerationStatusDto getStatus(Long projectId) {
+        projectAccessService.requireReadableProject(projectId);
         SlideGenerationStatusDto cached = states.get(projectId);
         if (cached == null) {
             return idleStatus(projectId);

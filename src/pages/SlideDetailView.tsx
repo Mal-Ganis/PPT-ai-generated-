@@ -1,13 +1,20 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Loader2, Save } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FileSearch, Loader2, Save } from 'lucide-react';
 import { FlowExitNav } from '@/components/FlowExitNav';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { useAuth } from '@/contexts/AuthContext';
 import { citationAttentionSummary, editableTextToSources } from '@/lib/citationHints';
 import { isStructuralSlide } from '@/lib/structuralSlide';
-import { fetchProject, updateProjectSlide, type ProjectDetailResponse, type ProjectDetailSlide } from '@/lib/backend';
+import {
+  fetchProject,
+  submitPageEvaluation,
+  updateProjectSlide,
+  type ProjectDetailResponse,
+  type ProjectDetailSlide,
+} from '@/lib/backend';
 import { toast } from 'sonner';
 
 function bulletsFromSlide(slide: ProjectDetailSlide): string[] {
@@ -17,25 +24,33 @@ function bulletsFromSlide(slide: ProjectDetailSlide): string[] {
 }
 
 export default function SlideDetailView() {
+  const { canWrite } = useAuth();
   const { projectId: projectIdParam, slideId: slideIdParam } = useParams();
   const navigate = useNavigate();
   const projectId = Number(projectIdParam);
   const slideId = Number(slideIdParam);
 
   const [detail, setDetail] = useState<ProjectDetailResponse | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [editBullets, setEditBullets] = useState('');
   const [editSources, setEditSources] = useState('');
   const [saving, setSaving] = useState(false);
+  const [evaluating, setEvaluating] = useState(false);
 
   useEffect(() => {
     if (!projectId || !slideId) {
       toast.error('路由参数无效');
       return;
     }
+    setLoadError(null);
     fetchProject(projectId)
       .then(setDetail)
-      .catch((e) => toast.error(e instanceof Error ? e.message : '加载失败'));
+      .catch((e) => {
+        const msg = e instanceof Error ? e.message : '加载失败';
+        setLoadError(msg);
+        toast.error(msg);
+      });
   }, [projectId, slideId]);
 
   const slides: ProjectDetailSlide[] = detail
@@ -82,6 +97,33 @@ export default function SlideDetailView() {
       setSaving(false);
     }
   };
+
+  const handlePageEvaluation = async () => {
+    if (!projectId || !slideId) return;
+    setEvaluating(true);
+    try {
+      const report = await submitPageEvaluation(projectId, slideId);
+      toast.success(
+        `单页评估完成 · 自动分 ${report.autoTotalScore?.toFixed(1) ?? '—'} 分 · 门禁 ${report.qualityGateStatus ?? '—'}`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '单页评估失败');
+    } finally {
+      setEvaluating(false);
+    }
+  };
+
+  if (loadError) {
+    return (
+      <div className="min-h-screen pt-24 px-6">
+        <p className="text-[#1f1f1f] mb-2">无法加载项目：{loadError}</p>
+        <p className="text-sm text-[#1f1f1f]/55 mb-4">
+          若提示无权访问，请退出后使用管理员（admin）或编辑者账号重新登录。
+        </p>
+        <FlowExitNav />
+      </div>
+    );
+  }
 
   if (!detail) {
     return (
@@ -130,12 +172,33 @@ export default function SlideDetailView() {
                   <p className="text-sm text-[#1f1f1f]/50 mt-2">章节：{slide.chapter}</p>
                 )}
               </div>
-              <Button
-                type="button"
-                className="shrink-0 bg-[#3898ec] hover:bg-[#0082f3] text-white"
-                disabled={saving}
-                onClick={() => void handleSave()}
-              >
+              <div className="flex flex-wrap gap-2 shrink-0">
+                {canWrite && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={evaluating}
+                    onClick={() => void handlePageEvaluation()}
+                  >
+                    {evaluating ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        评估中…
+                      </>
+                    ) : (
+                      <>
+                        <FileSearch className="w-4 h-4 mr-2" />
+                        评估本页
+                      </>
+                    )}
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  className="bg-[#3898ec] hover:bg-[#0082f3] text-white"
+                  disabled={saving}
+                  onClick={() => void handleSave()}
+                >
                 {saving ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -148,6 +211,7 @@ export default function SlideDetailView() {
                   </>
                 )}
               </Button>
+              </div>
             </div>
 
             <div className="space-y-6">

@@ -34,6 +34,14 @@ public class EvaluationReportController {
         return ResponseEntity.status(HttpStatus.CREATED).body(reportId);
     }
 
+    /** 手动或补写整项目自动评估（结构/密度/语言/引用 + 质量门禁 + LLM 建议） */
+    @PostMapping("/auto")
+    public ResponseEntity<EvaluationReportResponse> createAutoEvaluation(
+        @PathVariable("projectId") Long projectId) {
+        EvaluationReportResponse response = evaluationReportService.createAutoEvaluationReportAndReturn(projectId);
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
     @GetMapping
     public ResponseEntity<List<EvaluationReportResponse>> getEvaluations(@PathVariable("projectId") Long projectId) {
         List<EvaluationReportResponse> reports = evaluationReportService.getReportsForProject(projectId);

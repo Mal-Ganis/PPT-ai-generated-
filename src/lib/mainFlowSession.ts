@@ -1,5 +1,5 @@
 import type { AppStep, OutlineData, SlideData } from '../App';
-import type { WorkflowStep } from './workflowSteps';
+import { WORKFLOW_STEP_LABELS, type WorkflowStep } from './workflowSteps';
 
 const STORAGE_KEY = 'ppt-main-flow-v1';
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -8,6 +8,11 @@ export interface MainFlowInputData {
   type: 'topic' | 'document';
   content: string;
   presentationDurationMinutes?: number;
+  presenterRole?: string;
+  llmApiKeyPresetId?: string | null;
+  llmApiKeyOverride?: string;
+  llmBaseUrlOverride?: string;
+  llmModelOverride?: string;
 }
 
 export interface MainFlowSession {
@@ -19,6 +24,21 @@ export interface MainFlowSession {
   finalSlides: SlideData[] | null;
   /** 是否已解锁预览步骤（完成编辑提炼后） */
   previewUnlocked?: boolean;
+  /** 评估页「返回」应回到的流程步骤 */
+  evaluationReturnStep?: AppStep;
+}
+
+/** 从子路由（如 /projects）返回主流程时的 location.state */
+export interface FlowProjectsNavState {
+  returnTo?: AppStep;
+}
+
+export function getAppStepBackLabel(step: AppStep): string {
+  if (step === 'home') return '返回首页';
+  if (step === 'evaluation') return '返回评估报告';
+  if (step === 'projects') return '返回项目列表';
+  if (isWorkflowStep(step)) return `返回${WORKFLOW_STEP_LABELS[step]}`;
+  return '返回';
 }
 
 const WORKFLOW_STEPS: WorkflowStep[] = ['input', 'outline', 'content', 'preview'];

@@ -46,21 +46,38 @@ public class AuthDataInitializer implements ApplicationRunner {
     @Override
     @Transactional
     public void run(ApplicationArguments args) {
-        if (userRepository.count() > 0) {
-            return;
+        ensureUser(adminUsername, "系统管理员", adminPassword, UserRole.ADMIN, true);
+        if (userRepository.count() <= 3) {
+            ensureUser(editorUsername, "内容编辑", editorPassword, UserRole.EDITOR, false);
+            ensureUser(viewerUsername, "只读访客", viewerPassword, UserRole.VIEWER, false);
         }
-        createUser(adminUsername, "系统管理员", adminPassword, UserRole.ADMIN);
-        createUser(editorUsername, "内容编辑", editorPassword, UserRole.EDITOR);
-        createUser(viewerUsername, "只读访客", viewerPassword, UserRole.VIEWER);
-        log.info("已初始化演示账号：admin / editor / viewer（详见 application.yml 默认密码）");
     }
 
-    private void createUser(String username, String displayName, String password, UserRole role) {
-        User user = new User();
-        user.setUsername(username);
-        user.setDisplayName(displayName);
-        user.setPasswordHash(passwordEncoder.encode(password));
-        user.setRole(role);
-        userRepository.save(user);
+    /**
+     * 确保内置账号存在且角色正确（避免库中已有用户时未创建 admin，或 admin 被误降为 VIEWER）。
+     */
+    private void ensureUser(String username,
+                            String displayName,
+                            String password,
+                            UserRole role,
+                            boolean forceRole) {
+        if (username == null || username.isBlank()) {
+            return;
+        }
+        userRepository.findByUsernameIgnoreCase(username.trim()).ifPresentOrElse(existing -> {
+            if (forceRole && existing.getRole() != role) {
+                existing.setRole(role);
+                userRepository.save(existing);
+                log.warn("已修正内置账号 {} 的角色为 {}", username, role);
+            }
+        }, () -> {
+            User user = new User();
+            user.setUsername(username.trim());
+            user.setDisplayName(displayName);
+            user.setPasswordHash(passwordEncoder.encode(password));
+            user.setRole(role);
+            userRepository.save(user);
+            log.info("已创建内置账号 {}（{}）", username, role);
+        });
     }
 }

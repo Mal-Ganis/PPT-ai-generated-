@@ -55,15 +55,26 @@ public class OutlineGenerationService {
     }
 
     public ProjectOutlineResponse generateOutline(String topic, int presentationDurationMinutes) {
+        return generateOutline(topic, presentationDurationMinutes, null);
+    }
+
+    public ProjectOutlineResponse generateOutline(String topic,
+                                                  int presentationDurationMinutes,
+                                                  String presenterRole) {
         SystemConfigDto config = systemConfigService.getSystemConfig();
         String augmented = topic != null ? topic : "";
         if (!OUTLINE_NARRATIVE_HINT.isBlank()) {
             augmented = OUTLINE_NARRATIVE_HINT + "\n\n" + augmented;
         }
         String[] topicAndRetrieval = splitTopicAndRetrieval(augmented);
+        String template = PresenterRolePromptBuilder.resolveOutlineTemplate(config.getOutlinePromptTemplate());
+        String narratorBlock = PresenterRolePromptBuilder.buildNarratorRoleBlock(presenterRole);
         String prompt = formatPrompt(
-            config.getOutlinePromptTemplate(),
-            Map.of("content", topicAndRetrieval[0], "retrieved_context", topicAndRetrieval[1]));
+            template,
+            Map.of(
+                "content", topicAndRetrieval[0],
+                "retrieved_context", topicAndRetrieval[1],
+                "narrator_role", narratorBlock));
         prompt = prompt + "\n\n" + PresentationDurationPlanner.outlineGuidanceBlock(presentationDurationMinutes);
         boolean includeQaSlide = resolveOutlineIncludeQaSlide(config);
         prompt = prompt + "\n\n" + outlineQaGuidanceBlock(includeQaSlide);
@@ -73,13 +84,13 @@ public class OutlineGenerationService {
         String responseText = deepseekChatClient.chatCompletions(body, Duration.ofSeconds(120));
         try {
             ProjectOutlineResponse parsed = parseOutlineResponse(responseText);
-            return finalizeOutline(parsed, topicAndRetrieval[0], includeQaSlide);
+            return finalizeOutline(parsed, topicAndRetrieval[0], includeQaSlide, presenterRole);
         } catch (Exception e) {
             String assistant = extractAssistantContent(responseText);
             if (assistant != null) {
                 try {
                     ProjectOutlineResponse recovered = parseOutlineFromAssistantJson(assistant);
-                    return finalizeOutline(recovered, topicAndRetrieval[0], includeQaSlide);
+                    return finalizeOutline(recovered, topicAndRetrieval[0], includeQaSlide, presenterRole);
                 } catch (Exception ignored) {
                     // 已由 parseOutlineFromAssistantJson 内部尝试围栏与括号截取
                 }
@@ -88,7 +99,7 @@ public class OutlineGenerationService {
             String[] parts = splitTopicAndRetrieval(raw);
             log.warn("Outline JSON parse failed; degraded outline. Cause: {}", e.getMessage());
             ProjectOutlineResponse degraded = degradedOutline(parts[0], parts[1]);
-            return finalizeOutline(degraded, parts[0], includeQaSlide);
+            return finalizeOutline(degraded, parts[0], includeQaSlide, presenterRole);
         }
     }
 
@@ -104,6 +115,8 @@ public class OutlineGenerationService {
             ## 骨架页唯一性（必须遵守）
             - 全稿**只能有 1 页封面、1 页目录**（目录页 title 用「目录」或「目次」；第 3 页起为正文）。
             - **封面**：`title` 必须等于 JSON 顶层 `title`（演示主标题，禁止把页面标题写成「封面」二字）；`chapter` 填「封面」；`content` 只写副标题、汇报人等补充信息，不要重复主标题。
+            - **封面禁止编造日期**：不得虚构「20xx年x月x日」等具体日期；用户未提供日期时，写「日期（待填写）」或省略，勿用检索上下文或模型臆测填充。
+            - **封面汇报人**：用户指定演示角色时，封面「汇报人/演讲者/汇报信息」须写该角色名（如角色「吕布」→「汇报人：吕布」），禁止写与角色无关的单位、课题组或团队名。
             - **目录**：`title` 用「目录」或「目次」；`chapter` 填「目录」；`content` 列出 **4–10 个章节名**（叙事阶段名，如「背景与问题」「核心机制」），**禁止**把各正文页的 page title 逐条抄进目录。
             - 正文页：`title` 为**该页主题短标题**；`chapter` 为所属章节名，且**必须**与目录 `content` 中某一条一致。
             - **禁止**在正文中再插入第二页目录。
@@ -129,12 +142,13 @@ public class OutlineGenerationService {
     private ProjectOutlineResponse finalizeOutline(
         ProjectOutlineResponse parsed,
         String themeLine,
-        boolean includeQaSlide
+        boolean includeQaSlide,
+        String presenterRole
     ) {
-        ProjectOutlineResponse withCover = ensureCoverAndTableOfContents(parsed, themeLine);
+        ProjectOutlineResponse withCover = ensureCoverAndTableOfContents(parsed, themeLine, presenterRole);
         ProjectOutlineResponse withQa = ensureQaSlide(withCover, includeQaSlide);
         ProjectOutlineResponse normalized = validateAndNormalizeOutline(withQa);
-        applyChapterAndTitleSemantics(normalized);
+        applyChapterAndTitleSemantics(normalized, presenterRole);
         if (normalized.getSlides() == null || normalized.getSlides().isEmpty()) {
             throw new IllegalStateException("outline_json_has_no_slides");
         }
@@ -145,6 +159,14 @@ public class OutlineGenerationService {
      * 保证全稿仅有 1 页封面（第 1 页）、1 页目录（第 2 页）。模型多生成的封面/目录会被合并丢弃，避免「两个目录」。
      */
     public ProjectOutlineResponse ensureCoverAndTableOfContents(ProjectOutlineResponse outline, String themeLine) {
+        return ensureCoverAndTableOfContents(outline, themeLine, null);
+    }
+
+    public ProjectOutlineResponse ensureCoverAndTableOfContents(
+        ProjectOutlineResponse outline,
+        String themeLine,
+        String presenterRole
+    ) {
         if (outline == null) {
             return null;
         }
@@ -182,9 +204,9 @@ public class OutlineGenerationService {
         }
 
         ProjectOutlineResponse.OutlineSlide cover = coverCandidates.isEmpty()
-            ? buildDefaultCoverSlide(deckTitle)
+            ? buildDefaultCoverSlide(deckTitle, presenterRole)
             : pickRichestSlide(coverCandidates);
-        normalizeCoverSlide(cover, deckTitle);
+        normalizeCoverSlide(cover, deckTitle, presenterRole);
 
         ProjectOutlineResponse.OutlineSlide toc = tocCandidates.isEmpty()
             ? buildDefaultTocSlide(bodySlides)
@@ -200,13 +222,18 @@ public class OutlineGenerationService {
     }
 
     private static ProjectOutlineResponse.OutlineSlide buildDefaultCoverSlide(String deckTitle) {
+        return buildDefaultCoverSlide(deckTitle, null);
+    }
+
+    private static ProjectOutlineResponse.OutlineSlide buildDefaultCoverSlide(String deckTitle, String presenterRole) {
         ProjectOutlineResponse.OutlineSlide cover = new ProjectOutlineResponse.OutlineSlide();
         cover.setTitle(deckTitle);
         cover.setChapter("封面");
-        cover.setContent(new String[]{
-            "副标题：用一句话点出听众收益或矛盾（可改）",
-            "汇报信息：单位 / 姓名 / 日期（请在现场填写）"
-        });
+        List<String> bullets = new ArrayList<>(CoverSlideSanitizer.defaultCoverBullets(presenterRole));
+        if (PresenterRolePromptBuilder.sanitize(presenterRole) == null) {
+            bullets.set(0, "副标题：用一句话点出听众收益或矛盾（可改）");
+        }
+        cover.setContent(bullets.toArray(new String[0]));
         cover.setNotes("10–20 秒开场：自报家门 + 今天讲什么 + 为什么值得听。");
         return cover;
     }
@@ -231,6 +258,10 @@ public class OutlineGenerationService {
      * 封面主标题、目录章节列表、正文页 chapter 与目录对齐。
      */
     void applyChapterAndTitleSemantics(ProjectOutlineResponse outline) {
+        applyChapterAndTitleSemantics(outline, null);
+    }
+
+    void applyChapterAndTitleSemantics(ProjectOutlineResponse outline, String presenterRole) {
         if (outline == null || outline.getSlides() == null || outline.getSlides().size() < 2) {
             return;
         }
@@ -240,7 +271,7 @@ public class OutlineGenerationService {
 
         List<ProjectOutlineResponse.OutlineSlide> slides = outline.getSlides();
         ProjectOutlineResponse.OutlineSlide cover = slides.get(0);
-        normalizeCoverSlide(cover, deckTitle);
+        normalizeCoverSlide(cover, deckTitle, presenterRole);
 
         ProjectOutlineResponse.OutlineSlide toc = slides.get(1);
         normalizeTocSlide(toc);
@@ -280,6 +311,14 @@ public class OutlineGenerationService {
     }
 
     private static void normalizeCoverSlide(ProjectOutlineResponse.OutlineSlide cover, String deckTitle) {
+        normalizeCoverSlide(cover, deckTitle, null);
+    }
+
+    private static void normalizeCoverSlide(
+        ProjectOutlineResponse.OutlineSlide cover,
+        String deckTitle,
+        String presenterRole
+    ) {
         if (cover == null) {
             return;
         }
@@ -288,7 +327,9 @@ public class OutlineGenerationService {
             cover.setTitle(deckTitle);
         }
         cover.setChapter("封面");
-        cover.setContent(stripRedundantMainTitleBullets(cover.getContent(), deckTitle));
+        cover.setContent(CoverSlideSanitizer.sanitizeContentArray(
+            stripRedundantMainTitleBullets(cover.getContent(), deckTitle),
+            presenterRole));
     }
 
     private static void normalizeTocSlide(ProjectOutlineResponse.OutlineSlide toc) {
@@ -606,18 +647,24 @@ public class OutlineGenerationService {
     }
 
     private String buildOutlineRequestBody(String prompt, SystemConfigDto config) {
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("model", config.getLlmModel());
-        String system = """
-            你是一个只输出 JSON 的接口后端。严格遵守：回复正文必须是**单个合法 JSON 对象**，首字符为 {、末字符为 }；禁止 Markdown 围栏、禁止 JSON 以外的任何说明或思考过程。
-            """.trim();
-        payload.put("messages", List.of(
-            Map.of("role", "system", "content", system),
-            Map.of("role", "user", "content", prompt)));
-        payload.put("temperature", config.getTemperature());
-        payload.put("max_tokens", outlineMaxTokens);
-        payload.put("top_p", config.getTopP());
-        payload.put("top_k", config.getTopK());
+        String baseUrl = LlmRequestContext.resolveBaseUrl(
+            config.getLlmBaseUrl() != null ? config.getLlmBaseUrl() : "https://api.deepseek.com");
+        String model = LlmRequestContext.resolveModel(config.getLlmModel());
+        if (model == null || model.isBlank()) {
+            model = "deepseek-chat";
+        }
+        Map<String, Object> payload = LlmEndpointSupport.chatPayload(
+            model,
+            List.of(
+                Map.of("role", "system", "content", """
+                    你是一个只输出 JSON 的接口后端。严格遵守：回复正文必须是**单个合法 JSON 对象**，首字符为 {、末字符为 }；禁止 Markdown 围栏、禁止 JSON 以外的任何说明或思考过程。
+                    """.trim()),
+                Map.of("role", "user", "content", prompt)),
+            config.getTemperature(),
+            outlineMaxTokens,
+            config.getTopP(),
+            config.getTopK(),
+            baseUrl);
         payload.put("response_format", Map.of("type", "json_object"));
 
         try {

@@ -72,11 +72,13 @@ public final class StructuralSlideDetector {
             if (!t.isEmpty()) {
                 ppt.add(t);
             }
-            if (scriptBullets != null) {
-                scriptBullets.stream()
+            List<String> sanitizedScript = CoverSlideSanitizer.sanitizeBullets(scriptBullets);
+            if (sanitizedScript != null) {
+                sanitizedScript.stream()
                     .filter(b -> b != null && !b.isBlank())
                     .map(String::trim)
                     .filter(b -> !b.equals(t))
+                    .filter(b -> !CoverSlideSanitizer.containsSpecificDate(b) || b.contains("待填写"))
                     .limit(3)
                     .forEach(ppt::add);
             }
@@ -106,7 +108,11 @@ public final class StructuralSlideDetector {
         if (matchesQaOrDiscussionText(title)) {
             return true;
         }
-        return chapter != null && matchesQaOrDiscussionText(chapter);
+        if (chapter != null && matchesQaOrDiscussionText(chapter)) {
+            return true;
+        }
+        // 大纲约定 Q&A 页 chapter 为「收尾」，与正文章节区分
+        return chapter != null && "收尾".equals(chapter.trim());
     }
 
     private static boolean matchesQaOrDiscussionText(String text) {
@@ -117,10 +123,13 @@ public final class StructuralSlideDetector {
         if (t.contains("问题与讨论") || t.contains("问答") || t.contains("答疑")) {
             return true;
         }
+        if (t.contains("提问") && (t.contains("交流") || t.contains("互动") || t.length() <= 14)) {
+            return true;
+        }
         if (t.contains("讨论") && (t.contains("问题") || t.contains("交流") || t.contains("互动"))) {
             return true;
         }
-        return t.matches("(?i).*\\bq\\s*&?\\s*a\\b.*")
+        return t.matches("(?i).*\\bq\\s*[&＆]?\\s*a\\b.*")
             || t.contains("Q&A")
             || t.contains("Q＆A")
             || t.matches("(?i).*\\b(questions?\\s*(and|&)\\s*answers?|discussion)\\b.*");

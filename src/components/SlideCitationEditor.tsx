@@ -24,6 +24,7 @@ import {
   stripVerificationMarks,
 } from '@/lib/citationFormat';
 import { saveCitationReturnContext } from '@/lib/citationReturnContext';
+import { SlideIdLabel } from '@/components/SlideIdLabel';
 
 const PENDING_VERIFICATION = /\[待核实\]|【待核实】|\[待补充权威来源\]/;
 
@@ -399,9 +400,9 @@ export function SlideCitationEditor({
         className="min-h-[88px] text-sm border-gray-200 font-mono leading-relaxed"
       />
       {saveHint ? <p className="text-xs text-[#1f1f1f]/50 mt-1.5">{saveHint}</p> : null}
-      <p className="text-xs text-[#1f1f1f]/45 mt-1">
-        项目 ID {projectId}
-        {slideId != null ? ` · 幻灯片 ${slideId}` : ' · 当前页尚未同步到服务器'}
+      <p className="text-xs text-[#1f1f1f]/45 mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        <span>项目 ID {projectId}</span>
+        <SlideIdLabel slideId={slideId} />
       </p>
     </div>
   );

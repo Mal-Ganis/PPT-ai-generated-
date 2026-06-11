@@ -1,8 +1,8 @@
 package com.example.pptbackend.service;
 
+import com.example.pptbackend.model.EvaluationReport;
 import com.example.pptbackend.model.Project;
 import com.example.pptbackend.model.Slide;
-import com.example.pptbackend.model.EvaluationReport;
 import com.example.pptbackend.repository.ProjectRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -14,6 +14,7 @@ import java.util.regex.Pattern;
 
 /**
  * 依据 ILF-1 大纲与正文自动计算多维度分数，与人工评分一并写入 ILF-3。
+ * 事实准确抽检已停用，不在自动分与质量门禁中计权。
  */
 @Service
 public class AutoEvaluationScoringService {
@@ -22,45 +23,81 @@ public class AutoEvaluationScoringService {
         "因此|所以|其次|再次|总之|综上|此外|然而|接下来|最后|引言|目录|结论|展望");
 
     private final ProjectRepository projectRepository;
-    private final FactConsistencyService factConsistencyService;
 
-    public AutoEvaluationScoringService(ProjectRepository projectRepository,
-                                         FactConsistencyService factConsistencyService) {
+    public AutoEvaluationScoringService(ProjectRepository projectRepository) {
         this.projectRepository = projectRepository;
-        this.factConsistencyService = factConsistencyService;
     }
 
     @Transactional(readOnly = true)
     public void attachAutoScores(Long projectId, EvaluationReport report) {
+        attachAutoScores(projectId, report, report.getPageId());
+    }
+
+    @Transactional(readOnly = true)
+    public void attachAutoScores(Long projectId, EvaluationReport report, Long pageId) {
         Project project = projectRepository.findById(projectId).orElseThrow();
-        List<Slide> slides = project.getSlides().stream()
+        List<Slide> allSlides = project.getSlides().stream()
             .sorted(Comparator.comparing(Slide::getPosition))
             .toList();
+        List<Slide> slides = pageId != null
+            ? allSlides.stream().filter(s -> pageId.equals(s.getId())).toList()
+            : allSlides;
 
-        int structure = scoreStructure(slides);
+        if (slides.isEmpty()) {
+            zeroOutAutoScores(report);
+            return;
+        }
+
+        int structure = pageId != null ? scoreSingleSlideStructure(slides.get(0)) : scoreStructure(slides);
         int density = scoreInformationDensity(slides);
         int sourceCov = scoreSourceCoverage(slides);
-        int coherence = scoreCoherence(slides);
-        double factRate01 = factConsistencyService.computeVerificationRate(projectId, project);
-        int factual = mapFactualAutoScore(factRate01);
+        int coherence = pageId != null ? scoreSingleSlideCoherence(slides.get(0)) : scoreCoherence(slides);
 
         report.setAutoOutlineLogicScore(structure);
         report.setAutoInfoDensityScore(density);
         report.setAutoSourceCoverageScore(sourceCov);
         report.setAutoLanguageExpressionScore(coherence);
-        report.setAutoFactualAccuracyScore(factual);
-        report.setFactVerificationRate(factRate01);
+        report.setAutoFactualAccuracyScore(null);
+        report.setFactVerificationRate(null);
+        report.setFactCheckDetails("[]");
 
-        double autoTotal = structure * 0.28 + factual * 0.28 + density * 0.18 + coherence * 0.14 + sourceCov * 0.12;
+        double autoTotal = structure * 0.35 + density * 0.25 + coherence * 0.20 + sourceCov * 0.20;
         report.setAutoTotalScore(autoTotal);
     }
 
-    /** 将 0~1 的 factVerificationRate 映射为 0~100 自动事实分：≥0.92 记满分，否则线性折算 */
-    private static int mapFactualAutoScore(double rate01) {
-        if (rate01 >= 0.92) {
-            return 100;
+    private void zeroOutAutoScores(EvaluationReport report) {
+        report.setAutoOutlineLogicScore(0);
+        report.setAutoInfoDensityScore(0);
+        report.setAutoSourceCoverageScore(0);
+        report.setAutoLanguageExpressionScore(0);
+        report.setAutoFactualAccuracyScore(null);
+        report.setFactVerificationRate(null);
+        report.setFactCheckDetails("[]");
+        report.setAutoTotalScore(0.0);
+    }
+
+    private int scoreSingleSlideStructure(Slide slide) {
+        int score = 50;
+        String title = slide.getTitle() != null ? slide.getTitle().toLowerCase(Locale.ROOT) : "";
+        int bullets = slide.getBullets() != null ? slide.getBullets().size() : 0;
+        if (bullets >= 3) {
+            score += 25;
+        } else if (bullets >= 1) {
+            score += 10;
         }
-        return (int) Math.round(Math.min(100, Math.max(0, rate01 / 0.92 * 100)));
+        if (slide.getSources() != null && !slide.getSources().isEmpty()) {
+            score += 15;
+        }
+        if (title.contains("目录") || title.contains("结论") || title.contains("总结")) {
+            score += 10;
+        }
+        return Math.min(100, score);
+    }
+
+    private int scoreSingleSlideCoherence(Slide slide) {
+        String blob = (slide.getTitle() != null ? slide.getTitle() : "")
+            + " " + (slide.getNotes() != null ? slide.getNotes() : "");
+        return TRANSITION.matcher(blob).find() ? 78 : 68;
     }
 
     private int scoreStructure(List<Slide> slides) {

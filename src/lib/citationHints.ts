@@ -4,7 +4,10 @@ import { isStructuralSlideData } from './structuralSlide';
 
 /** 与后端 SlideSourceCitationService 兜底文案、Prompt 占位保持一致 */
 const PLACEHOLDER_PATTERNS = [
-  /type=llm_inference/i,
+  /llm[-_]inference/i,
+  /type=llm[-_]inference/i,
+  /常识推断/,
+  /常识归纳(?!.*https?:\/\/)/,
   /已过滤不可验证链接/,
   /常识归纳需人工核对/,
   /未命中可核验的外部链接/,
@@ -18,6 +21,9 @@ const PENDING_VERIFICATION = /\[待核实\]|【待核实】|\[待补充权威来
 export function isPlaceholderSourceLine(line: string): boolean {
   const t = line.trim();
   if (!t) return true;
+  if (/https?:\/\//i.test(t) && !/llm[-_]inference/i.test(t)) {
+    return PLACEHOLDER_PATTERNS.filter((p) => !/常识/.test(p.source)).some((p) => p.test(t));
+  }
   return PLACEHOLDER_PATTERNS.some((p) => p.test(t));
 }
 

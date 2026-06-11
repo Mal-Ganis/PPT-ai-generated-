@@ -1,7 +1,10 @@
 package com.example.pptbackend.controller;
 
+import com.example.pptbackend.dto.LlmApiKeyPresetDto;
 import com.example.pptbackend.dto.SystemConfigDto;
+import com.example.pptbackend.service.LlmApiKeyService;
 import com.example.pptbackend.service.SystemConfigService;
+import java.util.List;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -15,14 +18,23 @@ import org.springframework.web.bind.annotation.RestController;
 public class SystemConfigController {
 
     private final SystemConfigService systemConfigService;
+    private final LlmApiKeyService llmApiKeyService;
 
-    public SystemConfigController(SystemConfigService systemConfigService) {
+    public SystemConfigController(SystemConfigService systemConfigService,
+                                  LlmApiKeyService llmApiKeyService) {
         this.systemConfigService = systemConfigService;
+        this.llmApiKeyService = llmApiKeyService;
     }
 
     @GetMapping
     public ResponseEntity<SystemConfigDto> getConfig() {
         return ResponseEntity.ok(systemConfigService.getSystemConfig());
+    }
+
+    /** 供生成页选择：仅返回 id、label、脱敏密钥 */
+    @GetMapping("/llm-api-key-presets")
+    public ResponseEntity<List<LlmApiKeyPresetDto>> listLlmApiKeyPresets() {
+        return ResponseEntity.ok(llmApiKeyService.listPresetsForUsers());
     }
 
     @PutMapping

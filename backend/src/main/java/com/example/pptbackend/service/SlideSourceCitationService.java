@@ -38,9 +38,7 @@ public class SlideSourceCitationService {
         List<String> out = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
         appendUnique(out, seen, normalizeLines(modelSources));
-        if (out.isEmpty()) {
-            appendUnique(out, seen, normalizeLines(retrievalLines));
-        }
+        appendUnique(out, seen, normalizeLines(retrievalLines));
         if (out.isEmpty()) {
             out.add("未命中可核验的外部链接；要点含 [待核实] 处请结合上传文档或「知识检索」结果后在本页手动补充出处");
         }
@@ -133,7 +131,7 @@ public class SlideSourceCitationService {
     }
 
     /**
-     * 将用户/模型来源行转为可读格式（如 JSON 对象串 → 「标题 | URL | type=…」），不过滤占位说明。
+     * 将用户/模型来源行转为可读格式；过滤 LLM 常识占位与假链，避免写入/展示「常识推断 | llm-inference」。
      */
     public List<String> formatSourceLinesForStorage(List<String> raw) {
         if (raw == null || raw.isEmpty()) {
@@ -144,6 +142,9 @@ public class SlideSourceCitationService {
         for (String line : raw) {
             String normalized = normalizeSourceLine(line);
             if (normalized == null || normalized.isBlank()) {
+                continue;
+            }
+            if (isBlockedOrHallucinatedSource(normalized) || isInternalPlaceholder(normalized)) {
                 continue;
             }
             if (seen.add(normalized)) {
@@ -224,12 +225,29 @@ public class SlideSourceCitationService {
         return sb.toString();
     }
 
-    private static boolean isInternalPlaceholder(String line) {
+    /** 模型/Prompt 占位来源，不可作为正式引用展示或持久化。 */
+    public static boolean isInternalPlaceholder(String line) {
+        if (line == null || line.isBlank()) {
+            return true;
+        }
         String lower = line.toLowerCase(Locale.ROOT);
-        return lower.contains("type=llm_inference")
-            || lower.contains("已过滤不可验证链接")
+        String normalized = lower.replace('-', '_');
+        if (normalized.contains("llm_inference")) {
+            return true;
+        }
+        if (lower.contains("type=llm_inference") || lower.contains("type=llm-inference")) {
+            return true;
+        }
+        if (lower.contains("已过滤不可验证链接")
             || lower.contains("常识归纳需人工核对")
-            || lower.contains("内部降级输出");
+            || lower.contains("内部降级输出")) {
+            return true;
+        }
+        if ((lower.contains("常识推断") || lower.contains("常识归纳"))
+            && !URL_PATTERN.matcher(line).find()) {
+            return true;
+        }
+        return false;
     }
 
     static boolean isBlockedOrHallucinatedSource(String line) {

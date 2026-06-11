@@ -107,10 +107,14 @@ public class ExternalKnowledgeSourceService {
         }
         int count = 0;
         for (ExternalSourceDocument doc : docs) {
+            if (shouldSkipIndexing(doc)) {
+                continue;
+            }
+            String segmentId = "external-" + projectId + "-" + Math.abs(urlOrFallback(doc).hashCode());
+            indexSegmentService.deleteByProjectIdAndSegmentId(projectId, segmentId);
             IndexSegmentRequest segmentRequest = new IndexSegmentRequest();
             segmentRequest.setProjectId(projectId);
-            segmentRequest.setSegmentId(
-                "external-" + projectId + "-" + Math.abs(urlOrFallback(doc).hashCode()));
+            segmentRequest.setSegmentId(segmentId);
             segmentRequest.setContent(buildSegmentContent(doc));
             segmentRequest.setMetadata(buildMetadata(doc));
             segmentRequest.setEmbedding(embeddingService.embed(segmentRequest.getContent()));
@@ -172,6 +176,11 @@ public class ExternalKnowledgeSourceService {
 
     private static String urlOrFallback(ExternalSourceDocument doc) {
         return doc.getUrl() != null ? doc.getUrl() : doc.getTitle();
+    }
+
+    private boolean shouldSkipIndexing(ExternalSourceDocument doc) {
+        String content = buildSegmentContent(doc);
+        return IndexEvidenceQuality.isSeoSpamEvidence(content);
     }
 
     /**

@@ -256,6 +256,12 @@ const OutlineSection = ({
                   目标演讲时长：{outline.presentationDurationMinutes} 分钟（正文将按此时长控制密度）
                 </p>
               )}
+              <p className="text-sm text-[#1f1f1f]/55 mt-2">
+                演示角色：
+                {outline.presenterRole?.trim()
+                  ? outline.presenterRole
+                  : 'AI 根据主题自动推断'}
+              </p>
             </div>
             <WorkflowStepActions
               currentStep="outline"

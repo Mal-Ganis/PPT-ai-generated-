@@ -40,6 +40,10 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/auth/login", "/api/auth/register").permitAll()
                 .requestMatchers("/api/health", "/actuator/**").permitAll()
+                .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.POST, "/api/auth/editor-access-request").hasRole("VIEWER")
+                .requestMatchers(HttpMethod.GET, "/api/auth/editor-access-request/status").authenticated()
+                .requestMatchers(HttpMethod.GET, "/api/config/llm-api-key-presets").hasAnyRole("ADMIN", "EDITOR")
                 .requestMatchers(HttpMethod.GET, "/api/config").authenticated()
                 .requestMatchers("/api/config/**").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.POST, "/api/index/segments").hasAnyRole("ADMIN", "EDITOR")
@@ -51,6 +55,7 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.DELETE, "/api/projects/**").hasAnyRole("ADMIN", "EDITOR")
                 .requestMatchers(HttpMethod.POST, "/api/projects/*/evaluations/**").hasAnyRole("ADMIN", "EDITOR")
                 .requestMatchers(HttpMethod.POST, "/api/projects/*/evaluations").hasAnyRole("ADMIN", "EDITOR")
+                .requestMatchers(HttpMethod.POST, "/api/projects/*/slides/*/evaluations").hasAnyRole("ADMIN", "EDITOR")
                 .anyRequest().authenticated()
             )
             .exceptionHandling(ex -> ex
@@ -62,9 +67,11 @@ public class SecurityConfig {
                 .accessDeniedHandler((request, response, accessDeniedException) -> {
                     response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                     response.setContentType("application/json;charset=UTF-8");
-                    String msg = accessDeniedException.getMessage() != null
-                        ? accessDeniedException.getMessage()
-                        : "无权执行此操作";
+                    String detail = accessDeniedException.getMessage();
+                    String msg = "无权执行此操作";
+                    if (detail != null && !detail.isBlank() && !detail.contains("Access is denied")) {
+                        msg = detail;
+                    }
                     response.getWriter().write("{\"message\":\"" + msg.replace("\"", "\\\"") + "\"}");
                 })
             )

@@ -10,7 +10,7 @@ import java.util.List;
 
 /**
  * 将「权威检索片段写入项目向量库」从大纲同步链路中拆出，事务提交后再异步执行。
- * 正文阶段若向量尚未就绪，{@link SlideGenerationService#buildRagContext} 会走 Tavily 兜底。
+ * 正文阶段若向量尚未就绪，{@link SlideGenerationService#buildRagContextBundle} 会走 Tavily 兜底并同步写入索引。
  */
 @Service
 public class DeferredProjectExternalIndexService {

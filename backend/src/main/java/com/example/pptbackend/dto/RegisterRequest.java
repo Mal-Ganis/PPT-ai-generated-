@@ -6,7 +6,8 @@ public class RegisterRequest {
     private String username;
     private String password;
     private String displayName;
-    private UserRole role;
+    /** 注册时可选；有效则按邀请码授予 EDITOR 等角色，否则为 VIEWER */
+    private String inviteCode;
 
     public String getUsername() {
         return username;
@@ -32,11 +33,11 @@ public class RegisterRequest {
         this.displayName = displayName;
     }
 
-    public UserRole getRole() {
-        return role;
+    public String getInviteCode() {
+        return inviteCode;
     }
 
-    public void setRole(UserRole role) {
-        this.role = role;
+    public void setInviteCode(String inviteCode) {
+        this.inviteCode = inviteCode;
     }
 }

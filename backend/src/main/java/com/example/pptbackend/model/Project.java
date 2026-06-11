@@ -35,15 +35,27 @@ public class Project {
     @Column(name = "presentation_duration_minutes")
     private Integer presentationDurationMinutes;
 
+    /** 用户指定的演示角色（如「高校课程讲师」）；为空时由 AI 根据输入推断。 */
+    @Column(name = "presenter_role", length = 200)
+    private String presenterRole;
+
+    /** 生成时选用的管理员预设密钥 id */
+    @Column(name = "llm_api_key_preset_id", length = 64)
+    private String llmApiKeyPresetId;
+
     @Column(nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
     @Column(nullable = false)
     private OffsetDateTime updatedAt;
 
-    /** 项目归属用户；历史数据可为 null（全员可读，仅管理员可删改）。 */
+    /** 项目归属用户；新建项目必设；历史 null 数据在启动迁移中标记为模板。 */
     @Column(name = "owner_user_id")
     private Long ownerUserId;
+
+    /** 模板项目：只读访客可见；编辑者仅能见自己名下非他人项目。 */
+    @Column(name = "is_template", nullable = false)
+    private boolean templateProject = false;
 
     @OneToMany(mappedBy = "project", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     private List<Slide> slides = new ArrayList<>();
@@ -80,6 +92,22 @@ public class Project {
         this.presentationDurationMinutes = presentationDurationMinutes;
     }
 
+    public String getPresenterRole() {
+        return presenterRole;
+    }
+
+    public void setPresenterRole(String presenterRole) {
+        this.presenterRole = presenterRole;
+    }
+
+    public String getLlmApiKeyPresetId() {
+        return llmApiKeyPresetId;
+    }
+
+    public void setLlmApiKeyPresetId(String llmApiKeyPresetId) {
+        this.llmApiKeyPresetId = llmApiKeyPresetId;
+    }
+
     public OffsetDateTime getCreatedAt() {
         return createdAt;
     }
@@ -94,6 +122,14 @@ public class Project {
 
     public void setOwnerUserId(Long ownerUserId) {
         this.ownerUserId = ownerUserId;
+    }
+
+    public boolean isTemplateProject() {
+        return templateProject;
+    }
+
+    public void setTemplateProject(boolean templateProject) {
+        this.templateProject = templateProject;
     }
 
     public List<Slide> getSlides() {
@@ -137,6 +173,9 @@ public class Project {
         }
         if (theme != null && theme.length() > MAX_TITLE_THEME_CHARS) {
             theme = theme.substring(0, MAX_TITLE_THEME_CHARS);
+        }
+        if (presenterRole != null && presenterRole.length() > 200) {
+            presenterRole = presenterRole.substring(0, 200);
         }
     }
 }

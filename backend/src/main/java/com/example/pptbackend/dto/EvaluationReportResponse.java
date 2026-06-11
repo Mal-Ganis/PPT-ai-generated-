@@ -1,6 +1,8 @@
 package com.example.pptbackend.dto;
 
 import java.time.OffsetDateTime;
+import java.util.List;
+import java.util.Map;
 
 public class EvaluationReportResponse {
 
@@ -19,6 +21,11 @@ public class EvaluationReportResponse {
     private Integer autoSourceCoverageScore;
     private Double autoTotalScore;
     private Double factVerificationRate;
+    private List<FactCheckDetailDto> factCheckDetails;
+    private String qualityGateStatus;
+    private List<String> qualityGateReasons;
+    private Boolean calibrationAgreeWithAuto;
+    private Map<String, Integer> calibrationDeltaFromAuto;
     private String recommendations;
     private String userFeedback;
     private OffsetDateTime evaluationTime;
@@ -141,6 +148,46 @@ public class EvaluationReportResponse {
 
     public void setFactVerificationRate(Double factVerificationRate) {
         this.factVerificationRate = factVerificationRate;
+    }
+
+    public List<FactCheckDetailDto> getFactCheckDetails() {
+        return factCheckDetails;
+    }
+
+    public void setFactCheckDetails(List<FactCheckDetailDto> factCheckDetails) {
+        this.factCheckDetails = factCheckDetails;
+    }
+
+    public String getQualityGateStatus() {
+        return qualityGateStatus;
+    }
+
+    public void setQualityGateStatus(String qualityGateStatus) {
+        this.qualityGateStatus = qualityGateStatus;
+    }
+
+    public List<String> getQualityGateReasons() {
+        return qualityGateReasons;
+    }
+
+    public void setQualityGateReasons(List<String> qualityGateReasons) {
+        this.qualityGateReasons = qualityGateReasons;
+    }
+
+    public Boolean getCalibrationAgreeWithAuto() {
+        return calibrationAgreeWithAuto;
+    }
+
+    public void setCalibrationAgreeWithAuto(Boolean calibrationAgreeWithAuto) {
+        this.calibrationAgreeWithAuto = calibrationAgreeWithAuto;
+    }
+
+    public Map<String, Integer> getCalibrationDeltaFromAuto() {
+        return calibrationDeltaFromAuto;
+    }
+
+    public void setCalibrationDeltaFromAuto(Map<String, Integer> calibrationDeltaFromAuto) {
+        this.calibrationDeltaFromAuto = calibrationDeltaFromAuto;
     }
 
     public String getRecommendations() {

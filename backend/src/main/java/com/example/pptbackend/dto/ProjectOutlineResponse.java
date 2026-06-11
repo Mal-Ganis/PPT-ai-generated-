@@ -8,6 +8,8 @@ public class ProjectOutlineResponse {
     private Long projectId;
     private String title;
     private Integer presentationDurationMinutes;
+    private String presenterRole;
+    private String llmApiKeyPresetId;
     private List<OutlineSlide> slides = new ArrayList<>();
 
     public Long getProjectId() {
@@ -32,6 +34,22 @@ public class ProjectOutlineResponse {
 
     public void setPresentationDurationMinutes(Integer presentationDurationMinutes) {
         this.presentationDurationMinutes = presentationDurationMinutes;
+    }
+
+    public String getPresenterRole() {
+        return presenterRole;
+    }
+
+    public void setPresenterRole(String presenterRole) {
+        this.presenterRole = presenterRole;
+    }
+
+    public String getLlmApiKeyPresetId() {
+        return llmApiKeyPresetId;
+    }
+
+    public void setLlmApiKeyPresetId(String llmApiKeyPresetId) {
+        this.llmApiKeyPresetId = llmApiKeyPresetId;
     }
 
     public List<OutlineSlide> getSlides() {

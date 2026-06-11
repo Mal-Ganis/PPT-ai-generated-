@@ -1,38 +1,88 @@
 import { useEffect, useState } from 'react';
-import { Search, AlertTriangle, CheckCircle2, Send, ThumbsDown, ThumbsUp } from 'lucide-react';
+import { Search, AlertTriangle, CheckCircle2, Send, ThumbsDown, ThumbsUp, FileSearch } from 'lucide-react';
 import { FlowExitNav } from '@/components/FlowExitNav';
+import { EvaluationDashboardPanel } from '@/components/EvaluationDashboardPanel';
+import { AutoEvaluationPanel } from '@/components/AutoEvaluationPanel';
+import { EvaluationHistoryChart } from '@/components/EvaluationHistoryChart';
+import { QualityGateBadge } from '@/components/QualityGateBadge';
 import { Button } from '@/components/ui/button';
 import {
   fetchEvaluationReports,
-  submitEvaluationReport,
   submitEvaluationCalibration,
+  submitEvaluationReport,
+  submitPageEvaluation,
+  triggerAutoEvaluation,
   type EvaluationReport,
 } from '@/lib/backend';
+import { buildEvaluationCompleteToast, mapAutoScoresToManualForm, QUALITY_GATE_RULES_SUMMARY } from '@/lib/evaluationQuality';
+import { toast } from 'sonner';
+import { formatRecommendations } from '@/lib/evaluationDisplay';
 
 interface EvaluationSectionProps {
   defaultProjectId?: number | null;
+  flowBack?: { label: string; onClick: () => void };
 }
 
-const EvaluationSection = ({ defaultProjectId }: EvaluationSectionProps) => {
+const EvaluationSection = ({ defaultProjectId, flowBack }: EvaluationSectionProps) => {
   const [projectId, setProjectId] = useState(defaultProjectId != null ? String(defaultProjectId) : '');
   const [reports, setReports] = useState<EvaluationReport[] | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
   const [outlineLogicScore, setOutlineLogicScore] = useState(75);
-  const [factualAccuracyScore, setFactualAccuracyScore] = useState(75);
   const [infoDensityScore, setInfoDensityScore] = useState(75);
   const [languageExpressionScore, setLanguageExpressionScore] = useState(75);
   const [recommendations, setRecommendations] = useState('');
   const [userFeedback, setUserFeedback] = useState('');
   const [submitMessage, setSubmitMessage] = useState('');
   const [calibrationMessage, setCalibrationMessage] = useState('');
+  const [pageSlideId, setPageSlideId] = useState('');
+  const [pageEvalMessage, setPageEvalMessage] = useState('');
+  const [autoEvalMessage, setAutoEvalMessage] = useState('');
+  const [dashboardRefresh, setDashboardRefresh] = useState(0);
+
+  const bumpDashboard = () => setDashboardRefresh((n) => n + 1);
 
   useEffect(() => {
     if (defaultProjectId != null) {
       setProjectId(String(defaultProjectId));
     }
   }, [defaultProjectId]);
+
+  useEffect(() => {
+    if (defaultProjectId == null || defaultProjectId <= 0) return;
+    void (async () => {
+      setIsLoading(true);
+      setError('');
+      try {
+        const data = await fetchEvaluationReports(defaultProjectId);
+        setReports(data);
+        if (data.length === 0) {
+          setError('当前项目暂无评估报告（可点击「重新自动评估」，或在正文/单页重生后自动写入）');
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : '查询失败，请稍后重试');
+      } finally {
+        setIsLoading(false);
+      }
+    })();
+  }, [defaultProjectId]);
+
+  const applyLatestAutoScores = () => {
+    const latest = reports?.[0];
+    if (!latest?.autoTotalScore) {
+      setSubmitMessage('暂无自动评估数据，请先完成正文生成或点击「查询报告」。');
+      return;
+    }
+    const mapped = mapAutoScoresToManualForm(latest);
+    setOutlineLogicScore(mapped.outlineLogicScore);
+    setInfoDensityScore(mapped.infoDensityScore);
+    setLanguageExpressionScore(mapped.languageExpressionScore);
+    if (latest.recommendations?.trim()) {
+      setRecommendations(latest.recommendations);
+    }
+    setSubmitMessage('已填入最新自动评估分项，可按需微调后提交人工评分。');
+  };
 
   const handleQuery = async () => {
     setError('');
@@ -51,6 +101,7 @@ const EvaluationSection = ({ defaultProjectId }: EvaluationSectionProps) => {
       if (data.length === 0) {
         setError('当前项目暂无评估报告');
       }
+      bumpDashboard();
     } catch (e) {
       setError(e instanceof Error ? e.message : '查询失败，请稍后重试');
     } finally {
@@ -68,7 +119,6 @@ const EvaluationSection = ({ defaultProjectId }: EvaluationSectionProps) => {
     try {
       await submitEvaluationReport(parsedId, {
         outlineLogicScore,
-        factualAccuracyScore,
         infoDensityScore,
         languageExpressionScore,
         recommendations: recommendations || undefined,
@@ -102,17 +152,59 @@ const EvaluationSection = ({ defaultProjectId }: EvaluationSectionProps) => {
     }
   };
 
+  const handleTriggerAutoEvaluation = async () => {
+    setAutoEvalMessage('');
+    const parsedId = Number(projectId);
+    if (!parsedId || parsedId <= 0) {
+      setAutoEvalMessage('请先填写有效的项目 ID');
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const report = await triggerAutoEvaluation(parsedId);
+      toast.success(buildEvaluationCompleteToast(report), { duration: 6000 });
+      setAutoEvalMessage('已写入最新自动评估报告。');
+      await handleQuery();
+    } catch (e) {
+      setAutoEvalMessage(e instanceof Error ? e.message : '自动评估失败，请查看后端日志');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handlePageEvaluation = async () => {
+    setPageEvalMessage('');
+    const parsedProjectId = Number(projectId);
+    const parsedSlideId = Number(pageSlideId);
+    if (!parsedProjectId || parsedProjectId <= 0) {
+      setPageEvalMessage('请先填写有效的项目 ID');
+      return;
+    }
+    if (!parsedSlideId || parsedSlideId <= 0) {
+      setPageEvalMessage('请填写要评估的幻灯片 ID（pageId）');
+      return;
+    }
+    try {
+      await submitPageEvaluation(parsedProjectId, parsedSlideId);
+      setPageEvalMessage(`已写入单页评估（slideId=${parsedSlideId}），含 LLM 改进建议。`);
+      await handleQuery();
+    } catch (e) {
+      setPageEvalMessage(e instanceof Error ? e.message : '单页评估失败');
+    }
+  };
+
   return (
     <section className="min-h-screen pt-24 pb-16 bg-[#f3f3f3]">
       <div className="section-container">
         <div className="section-inner max-w-4xl space-y-8">
-          <FlowExitNav />
+          <FlowExitNav flowBack={flowBack} projectsLinkState={{ returnTo: 'evaluation' }} />
+          <EvaluationDashboardPanel refreshToken={dashboardRefresh} />
           <div className="bg-white rounded-3xl shadow-lg p-8">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
               <div>
                 <h1 className="text-3xl font-bold text-[#1f1f1f]">评估反馈（EI-5）</h1>
                 <p className="text-[#1f1f1f]/60 mt-2">
-                  提交人工评分后，后端自动计算多维度指标（含向量检索事实抽检一致率），两类分数一并写入 ILF-3。
+                  自动评估含质量门禁（{QUALITY_GATE_RULES_SUMMARY}）与 LLM 改进建议；支持整项目与单页（pageId）评估及校准回流。
                 </p>
               </div>
               <div className="flex items-center gap-3">
@@ -131,8 +223,31 @@ const EvaluationSection = ({ defaultProjectId }: EvaluationSectionProps) => {
             />
 
             <div className="grid gap-4 sm:grid-cols-2 mb-6">
+              <div>
+                <label className="block text-sm font-medium text-[#1f1f1f] mb-2">单页评估 · 幻灯片 ID</label>
+                <input
+                  type="number"
+                  value={pageSlideId}
+                  onChange={(e) => setPageSlideId(e.target.value)}
+                  placeholder="slideId / pageId"
+                  className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm outline-none transition focus:border-[#3898ec] focus:ring-2 focus:ring-[#3898ec]/20"
+                />
+              </div>
+              <div className="flex items-end">
+                <Button type="button" variant="outline" onClick={handlePageEvaluation} className="gap-2">
+                  <FileSearch className="w-4 h-4" />
+                  评估该页
+                </Button>
+              </div>
+            </div>
+            {pageEvalMessage && (
+              <div className="rounded-2xl bg-sky-50 border border-sky-200 p-4 text-sm text-sky-950 mb-6">
+                {pageEvalMessage}
+              </div>
+            )}
+
+            <div className="grid gap-4 sm:grid-cols-2 mb-4">
               <ScoreField label="大纲逻辑 (0–100)" value={outlineLogicScore} onChange={setOutlineLogicScore} />
-              <ScoreField label="事实准确率 (0–100)" value={factualAccuracyScore} onChange={setFactualAccuracyScore} />
               <ScoreField label="信息密度 (0–100)" value={infoDensityScore} onChange={setInfoDensityScore} />
               <ScoreField
                 label="语言表达 (0–100)"
@@ -140,6 +255,16 @@ const EvaluationSection = ({ defaultProjectId }: EvaluationSectionProps) => {
                 onChange={setLanguageExpressionScore}
               />
             </div>
+            {reports?.[0]?.autoTotalScore != null && (
+              <div className="mb-6">
+                <Button type="button" variant="outline" size="sm" onClick={applyLatestAutoScores}>
+                  采用最新自动分（可再微调）
+                </Button>
+                <p className="text-xs text-[#1f1f1f]/50 mt-2">
+                  自动评估已在正文生成后写入；可先一键对齐分项，再补充主观反馈。
+                </p>
+              </div>
+            )}
 
             <div className="space-y-4 mb-6">
               <div>
@@ -170,7 +295,21 @@ const EvaluationSection = ({ defaultProjectId }: EvaluationSectionProps) => {
               <Button type="button" variant="outline" onClick={handleQuery} disabled={isLoading}>
                 查询报告
               </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => void handleTriggerAutoEvaluation()}
+                disabled={isLoading}
+              >
+                重新自动评估
+              </Button>
             </div>
+
+            {autoEvalMessage && (
+              <div className="rounded-2xl bg-sky-50 border border-sky-200 p-4 text-sm text-sky-950 mb-4">
+                {autoEvalMessage}
+              </div>
+            )}
 
             {submitMessage && (
               <div className="rounded-2xl bg-emerald-50 border border-emerald-200 p-4 text-sm text-emerald-900 mb-4">
@@ -198,6 +337,13 @@ const EvaluationSection = ({ defaultProjectId }: EvaluationSectionProps) => {
             )}
 
             {reports && reports.length > 0 && (
+              <div className="rounded-2xl border border-gray-200 bg-white p-4 mb-8">
+                <p className="text-sm font-medium text-[#1f1f1f] mb-3">评估历史趋势</p>
+                <EvaluationHistoryChart reports={reports} />
+              </div>
+            )}
+
+            {reports && reports.length > 0 && (
               <div className="space-y-6 mt-8">
                 {reports.map((report, index) => (
                   <div key={report.id} className="rounded-3xl border border-gray-200 bg-[#fafbff] p-6">
@@ -205,18 +351,24 @@ const EvaluationSection = ({ defaultProjectId }: EvaluationSectionProps) => {
                       <div>
                         <h2 className="text-xl font-semibold text-[#1f1f1f]">报告 #{report.id}</h2>
                         <p className="text-sm text-[#1f1f1f]/60 mt-1">
-                          项目 ID：{report.projectId} {report.pageId ? `| 页面 ID：${report.pageId}` : ''}
+                          项目 ID：{report.projectId}{' '}
+                          {report.pageId ? `| 单页 ID：${report.pageId}` : '| 整项目评估'}
                         </p>
+                        {report.qualityGateStatus && (
+                          <div className="mt-2">
+                            <QualityGateBadge status={report.qualityGateStatus} />
+                          </div>
+                        )}
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <div className="rounded-2xl bg-[#e7f0ff] px-4 py-2 text-sm font-medium text-[#0f5abb] inline-flex items-center gap-2">
                           <CheckCircle2 className="w-4 h-4" />
-                          人工加权总分：{report.totalScore.toFixed(1)}
+                          人工加权总分：{report.totalScore.toFixed(1)} 分
                         </div>
                         {report.autoTotalScore != null && (
                           <div className="rounded-2xl bg-[#e7f8f4] px-4 py-2 text-sm font-medium text-[#0f766e] inline-flex items-center gap-2">
                             <CheckCircle2 className="w-4 h-4" />
-                            自动加权总分：{report.autoTotalScore.toFixed(1)}
+                            自动加权总分：{report.autoTotalScore.toFixed(1)} 分
                           </div>
                         )}
                       </div>
@@ -260,60 +412,57 @@ const EvaluationSection = ({ defaultProjectId }: EvaluationSectionProps) => {
                             <p className="mt-2 text-2xl font-semibold text-[#1f1f1f]">{report.outlineLogicScore}</p>
                           </div>
                           <div className="rounded-2xl bg-white p-4 border border-gray-200">
-                            <p className="text-sm text-[#1f1f1f]/70">事实准确率（人工）</p>
-                            <p className="mt-2 text-2xl font-semibold text-[#1f1f1f]">{report.factualAccuracyScore}</p>
-                          </div>
-                          <div className="rounded-2xl bg-white p-4 border border-gray-200">
                             <p className="text-sm text-[#1f1f1f]/70">信息密度</p>
                             <p className="mt-2 text-2xl font-semibold text-[#1f1f1f]">{report.infoDensityScore}</p>
                           </div>
-                          <div className="rounded-2xl bg-white p-4 border border-gray-200">
+                          <div className="rounded-2xl bg-white p-4 border border-gray-200 sm:col-span-2">
                             <p className="text-sm text-[#1f1f1f]/70">语言表达</p>
                             <p className="mt-2 text-2xl font-semibold text-[#1f1f1f]">{report.languageExpressionScore}</p>
                           </div>
                         </div>
                       </div>
-                      <div>
-                        <p className="text-sm font-semibold text-[#0f766e] mb-3">自动评估（后端）</p>
-                        {report.autoOutlineLogicScore != null ? (
-                          <div className="grid gap-4 sm:grid-cols-2">
-                            <div className="rounded-2xl bg-white p-4 border border-gray-200">
-                              <p className="text-sm text-[#1f1f1f]/70">结构 / 逻辑启发式</p>
-                              <p className="mt-2 text-2xl font-semibold text-[#1f1f1f]">{report.autoOutlineLogicScore}</p>
-                            </div>
-                            <div className="rounded-2xl bg-white p-4 border border-gray-200">
-                              <p className="text-sm text-[#1f1f1f]/70">信息密度</p>
-                              <p className="mt-2 text-2xl font-semibold text-[#1f1f1f]">{report.autoInfoDensityScore ?? '—'}</p>
-                            </div>
-                            <div className="rounded-2xl bg-white p-4 border border-gray-200">
-                              <p className="text-sm text-[#1f1f1f]/70">事实准确率（自动 · 语义映射）</p>
-                              <p className="mt-2 text-2xl font-semibold text-[#1f1f1f]">{report.autoFactualAccuracyScore ?? '—'}</p>
-                            </div>
-                            <div className="rounded-2xl bg-white p-4 border border-gray-200">
-                              <p className="text-sm text-[#1f1f1f]/70">语言表达 / 连贯</p>
-                              <p className="mt-2 text-2xl font-semibold text-[#1f1f1f]">{report.autoLanguageExpressionScore ?? '—'}</p>
-                            </div>
-                            <div className="rounded-2xl bg-white p-4 border border-gray-200 sm:col-span-2">
-                              <p className="text-sm text-[#1f1f1f]/70">引用来源覆盖 · 语义事实抽检（factVerificationRate）</p>
-                              <p className="mt-2 text-lg font-semibold text-[#1f1f1f]">
-                                {report.autoSourceCoverageScore ?? '—'} 分（有来源页占比）·{' '}
-                                {report.factVerificationRate != null
-                                  ? formatFactVerification(report.factVerificationRate)
-                                  : '—'}
-                              </p>
-                            </div>
-                          </div>
-                        ) : (
-                          <p className="text-sm text-[#1f1f1f]/50">暂无自动评估数据（旧报告或未写入）。</p>
-                        )}
-                      </div>
+                      <AutoEvaluationPanel report={report} showQualityGate={false} />
                     </div>
+
+                    {report.qualityGateReasons && report.qualityGateReasons.length > 0 && (
+                      <div className="rounded-2xl bg-white p-4 border border-gray-200 mb-4">
+                        <p className="text-sm font-medium text-[#1f1f1f] mb-2">质量门禁说明</p>
+                        <ul className="text-sm text-[#1f1f1f]/75 list-disc pl-5 space-y-1">
+                          {report.qualityGateReasons.map((reason, i) => (
+                            <li key={i}>{reason}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
 
                     <div className="space-y-4">
                       <div className="rounded-2xl bg-white p-4 border border-gray-200">
-                        <p className="text-sm font-medium text-[#1f1f1f] mb-2">改进建议</p>
-                        <p className="text-sm text-[#1f1f1f]/80">{report.recommendations || '暂无建议'}</p>
+                        <p className="text-sm font-medium text-[#1f1f1f] mb-2">改进建议（LLM）</p>
+                        {formatRecommendations(report.recommendations).length > 0 ? (
+                          <ul className="text-sm text-[#1f1f1f]/80 list-disc pl-5 space-y-1">
+                            {formatRecommendations(report.recommendations).map((line, i) => (
+                              <li key={i}>{line}</li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="text-sm text-[#1f1f1f]/80">{report.recommendations || '暂无建议'}</p>
+                        )}
                       </div>
+                      {report.calibrationAgreeWithAuto != null && (
+                        <div className="rounded-2xl bg-violet-50 p-4 border border-violet-200">
+                          <p className="text-sm font-medium text-[#1f1f1f] mb-1">校准回流</p>
+                          <p className="text-sm text-[#1f1f1f]/75">
+                            {report.calibrationAgreeWithAuto ? '用户认同自动分' : '用户认为自动分偏差较大'}
+                            {report.calibrationDeltaFromAuto && !report.calibrationAgreeWithAuto && (
+                              <span className="block text-xs mt-1 text-[#1f1f1f]/55">
+                                与自动分差值：大纲 {report.calibrationDeltaFromAuto.outline ?? 0}，密度{' '}
+                                {report.calibrationDeltaFromAuto.density ?? 0}，语言{' '}
+                                {report.calibrationDeltaFromAuto.language ?? 0}
+                              </span>
+                            )}
+                          </p>
+                        </div>
+                      )}
                       <div className="rounded-2xl bg-white p-4 border border-gray-200">
                         <p className="text-sm font-medium text-[#1f1f1f] mb-2">用户反馈</p>
                         <p className="text-sm text-[#1f1f1f]/80">{report.userFeedback || '暂无反馈'}</p>
@@ -351,14 +500,6 @@ function ScoreField(props: {
       />
     </div>
   );
-}
-
-/** 后端存 0~1（新规）或旧版 0~100 词重叠率 */
-function formatFactVerification(rate: number): string {
-  if (rate > 1) {
-    return `词重叠抽检约 ${rate.toFixed(1)}%（旧口径）`;
-  }
-  return `语义证据支持度均值 ${(rate * 100).toFixed(1)}%（目标 ≥92%）`;
 }
 
 export default EvaluationSection;

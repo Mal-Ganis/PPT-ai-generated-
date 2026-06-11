@@ -291,7 +291,8 @@ npm run build
 - **数据库报错找不到 `vector` 类型**：当前 PostgreSQL 未安装 pgvector，请换用 `pgvector/pgvector` 镜像或安装扩展。  
 - **大纲/幻灯片报错缺密钥**：设置 `DEEPSEEK_API_KEY` 后重启后端。  
 - **端口占用**：修改 `application.yml` 的 `server.port` 或关闭占用 8080 / 5173 的进程。  
-- **前端连不上后端**：检查 `VITE_API_BASE`、防火墙与后端是否启动。
+- **前端连不上后端**：检查 `VITE_API_BASE`、防火墙与后端是否启动。  
+- **不同标签页登录不同账号会互相干扰**：已改为每标签页独立会话（`sessionStorage`）；请刷新各标签页后分别登录。从地址栏新开标签页需重新登录；复制已有标签页会保留同一会话。
 
 ---
 

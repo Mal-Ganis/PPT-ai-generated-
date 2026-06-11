@@ -21,6 +21,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.io.IOException;
@@ -80,17 +82,18 @@ public class SlideGenerationService {
     private final ProjectAccessService projectAccessService;
     private final EvaluationReportService evaluationReportService;
     private final TransactionTemplate transactionTemplate;
+    private final LlmApiKeyService llmApiKeyService;
 
     private record RagContextBundle(String promptBlock, List<String> citationLines) {}
 
     private final int slideMaxTokens;
     private final boolean slideFallbackTavily;
     private final int slideFallbackLimit;
-    private final boolean selfCorrectionEnabled;
-    private final double tier1AutoBelow;
-    private final double tier1FactBelow;
-    private final double tier2AutoBelow;
-    private final double tier2FactBelow;
+    private final boolean selfCorrectionEnabledDefault;
+    private final double tier1AutoBelowDefault;
+    private final double tier1FactBelowDefault;
+    private final double tier2AutoBelowDefault;
+    private final double tier2FactBelowDefault;
     /** 正文专用模型；为 inherit 时沿用系统配置的 llmModel */
     private final String slideGenerationModel;
     /** 与 system_config.retrieval_limit 取较小值，控制单页向量命中条数 */
@@ -111,6 +114,7 @@ public class SlideGenerationService {
                                   ProjectAccessService projectAccessService,
                                   EvaluationReportService evaluationReportService,
                                   TransactionTemplate transactionTemplate,
+                                  LlmApiKeyService llmApiKeyService,
                                   @Value("${generation.slide-max-tokens:1536}") int slideMaxTokens,
                                   @Value("${generation.slide-fallback-tavily:true}") boolean slideFallbackTavily,
                                   @Value("${generation.slide-fallback-result-limit:1}") int slideFallbackLimit,
@@ -135,14 +139,15 @@ public class SlideGenerationService {
         this.projectAccessService = projectAccessService;
         this.evaluationReportService = evaluationReportService;
         this.transactionTemplate = transactionTemplate;
+        this.llmApiKeyService = llmApiKeyService;
         this.slideMaxTokens = Math.max(512, slideMaxTokens);
         this.slideFallbackTavily = slideFallbackTavily;
         this.slideFallbackLimit = Math.max(1, slideFallbackLimit);
-        this.selfCorrectionEnabled = selfCorrectionEnabled;
-        this.tier1AutoBelow = tier1AutoBelow;
-        this.tier1FactBelow = tier1FactBelow;
-        this.tier2AutoBelow = tier2AutoBelow;
-        this.tier2FactBelow = tier2FactBelow;
+        this.selfCorrectionEnabledDefault = selfCorrectionEnabled;
+        this.tier1AutoBelowDefault = tier1AutoBelow;
+        this.tier1FactBelowDefault = tier1FactBelow;
+        this.tier2AutoBelowDefault = tier2AutoBelow;
+        this.tier2FactBelowDefault = tier2FactBelow;
         this.slideGenerationModel = slideGenerationModel != null ? slideGenerationModel.trim() : "";
         this.slideRetrievalCap = Math.min(15, Math.max(1, slideRetrievalCap));
         this.slideFallbackSnippetMaxChars = Math.max(400, slideFallbackSnippetMaxChars);
@@ -154,8 +159,25 @@ public class SlideGenerationService {
     }
 
     @Transactional
+    public SlideContentResponse regenerateSlide(Long projectId, Long slideId, GenerateSlidesRequest request) {
+        GenerateSlidesRequest payload = request != null ? request : new GenerateSlidesRequest();
+        String inputType = payload.getInputType() != null ? payload.getInputType() : "topic";
+        String inputContent = payload.getInputContent() != null ? payload.getInputContent() : "";
+        try {
+            LlmRequestContext.set(resolveLlmConnection(projectId, payload));
+            SlideContentResponse response = doRegenerateSlide(projectId, slideId, inputType, inputContent, CorrectionTier.NONE, "");
+            refreshProjectAutoEvaluation(projectId);
+            return response;
+        } finally {
+            LlmRequestContext.clear();
+        }
+    }
+
+    @Transactional
     public SlideContentResponse regenerateSlide(Long projectId, Long slideId, String inputType, String inputContent) {
-        return doRegenerateSlide(projectId, slideId, inputType, inputContent, CorrectionTier.NONE, "");
+        SlideContentResponse response = doRegenerateSlide(projectId, slideId, inputType, inputContent, CorrectionTier.NONE, "");
+        refreshProjectAutoEvaluation(projectId);
+        return response;
     }
 
     private void regenerateSlideInNewTransaction(Long projectId, Long slideId, String inputType, String inputContent,
@@ -169,24 +191,23 @@ public class SlideGenerationService {
         Slide slide = slideRepository.findByIdAndProject_Id(slideId, projectId)
             .orElseThrow(() -> new EntityNotFoundException("Slide not found: " + slideId));
 
+        Project project = projectAccessService.requireReadableProject(projectId);
+        projectAccessService.assertWritable(project);
+
         if (StructuralSlideDetector.isStructuralSlide(slide.getTitle(), slide.getChapter())) {
             log.debug("Skipping LLM for structural slide project={} slide={} title={}",
                 projectId, slideId, slide.getTitle());
-            return preserveOutlineBullets(slide);
+            return preserveOutlineBullets(slide, project.getPresenterRole());
         }
 
-        Project project = projectRepository.findById(projectId)
-            .orElseThrow(() -> new EntityNotFoundException("Project not found: " + projectId));
         int durationMinutes = PresentationDurationPlanner.clampMinutes(project.getPresentationDurationMinutes());
 
         SystemConfigDto config = systemConfigService.getSystemConfig();
         int topK = Math.min(Math.max(1, config.getRetrievalLimit()), slideRetrievalCap);
-        RagContextBundle rag = buildRagContextBundle(projectId, slide.getTitle(), topK, tier);
+        RagContextBundle rag = buildRagContextBundle(
+            projectId, slide.getTitle(), project.getTheme(), topK, tier);
         String ragContext = rag.promptBlock();
 
-        if (!projectRepository.existsById(projectId)) {
-            throw new EntityNotFoundException("Project not found: " + projectId);
-        }
         List<Slide> ordered = loadOrderedSlides(projectId);
         int idx = -1;
         for (int i = 0; i < ordered.size(); i++) {
@@ -224,8 +245,9 @@ public class SlideGenerationService {
             : "（尚无：封面/目录首页生成时可为空。）";
         vars.put("prior_slides_digest", digestLine);
         vars.put("retrieved_context", retrievedContextBlock);
+        vars.put("narrator_role", PresenterRolePromptBuilder.buildSlideNarratorRoleBlock(project.getPresenterRole()));
 
-        String template = config.getSlidePromptTemplate();
+        String template = PresenterRolePromptBuilder.resolveSlideTemplate(config.getSlidePromptTemplate());
         String basePrompt = formatPrompt(template, vars);
         boolean digestInTemplate = template != null && template.contains("{prior_slides_digest}");
         String digestSection = digestInTemplate
@@ -243,9 +265,7 @@ public class SlideGenerationService {
         slide.setBullets(parsed.getContent() != null ? parsed.getContent() : new ArrayList<>());
         slide.setPptBullets(new ArrayList<>());
         slide.setNotes(null);
-        if (parsed.getSources() != null && !parsed.getSources().isEmpty()) {
-            slide.setSources(parsed.getSources());
-        }
+        slide.setSources(parsed.getSources() != null ? new ArrayList<>(parsed.getSources()) : new ArrayList<>());
         slideRepository.save(slide);
 
         return parsed;
@@ -298,9 +318,13 @@ public class SlideGenerationService {
         String previousBlock = buildPreviousContentBlock(request, slide);
 
         int durationMinutes = PresentationDurationPlanner.clampMinutes(project.getPresentationDurationMinutes());
+        String narratorBlock = PresenterRolePromptBuilder.buildSlideNarratorRoleBlock(project.getPresenterRole());
 
         String prompt = """
-            你是演示稿撰稿人。本页 content 是**演讲者口头讲的要点**，听众看不到引用列表。
+            ## 演示角色
+            %s
+
+            本页 content 是**演讲者口头讲的要点**，听众看不到引用列表。
             下方「事实素材」仅用于核对数字与结论；须**内化**为自然表述，禁止写成文献综述或引用格式。
 
             ## 全稿主题
@@ -336,6 +360,7 @@ public class SlideGenerationService {
             4. 与全稿主题及前后页逻辑一致；勿引入与主题无关的新话题。
             5. 只输出 JSON：{"content":["…","…"]}
             """.formatted(
+            narratorBlock,
             theme,
             title,
             chapter,
@@ -371,7 +396,35 @@ public class SlideGenerationService {
         out.setPptBullets(pptBullets);
         out.setNotes("");
         log.info("Regenerated slide {} from {} user sources for project {}", slideId, userSources.size(), projectId);
+        refreshProjectAutoEvaluation(projectId);
         return out;
+    }
+
+    /**
+     * 在正文事务提交后再评估，且使用独立事务，避免评估失败把 slide 保存一并回滚。
+     */
+    private void refreshProjectAutoEvaluation(Long projectId) {
+        Runnable run = () -> runAutoEvaluationInNewTransaction(projectId);
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    run.run();
+                }
+            });
+        } else {
+            run.run();
+        }
+    }
+
+    private void runAutoEvaluationInNewTransaction(Long projectId) {
+        try {
+            transactionTemplate.executeWithoutResult(status ->
+                evaluationReportService.createAutoEvaluationReportAndReturn(projectId));
+            log.info("Refreshed auto evaluation for project {} after slide content change", projectId);
+        } catch (Exception e) {
+            log.warn("Auto evaluation refresh failed for project {}: {}", projectId, e.getMessage(), e);
+        }
     }
 
     private List<String> resolveUserSourcesForRegeneration(RegenerateSlideFromSourcesRequest request, Slide slide) {
@@ -548,9 +601,21 @@ public class SlideGenerationService {
     public void generateAllSlides(Long projectId,
                                 GenerateSlidesRequest request,
                                 SlideGenerationProgressListener progress) {
-        if (!projectRepository.existsById(projectId)) {
-            throw new EntityNotFoundException("Project not found: " + projectId);
+        Project project = projectAccessService.requireReadableProject(projectId);
+        projectAccessService.assertWritable(project);
+
+        try {
+            LlmRequestContext.set(resolveLlmConnection(projectId, request));
+            prewarmProjectRetrievalIndex(project);
+            generateAllSlidesWithContext(projectId, request, progress);
+        } finally {
+            LlmRequestContext.clear();
         }
+    }
+
+    private void generateAllSlidesWithContext(Long projectId,
+                                              GenerateSlidesRequest request,
+                                              SlideGenerationProgressListener progress) {
 
         String inputType = request.getInputType() != null ? request.getInputType() : "topic";
         String inputContent = request.getInputContent() != null ? request.getInputContent() : "";
@@ -585,18 +650,18 @@ public class SlideGenerationService {
             return;
         }
 
-        if (!selfCorrectionEnabled) {
+        SelfCorrectionSettings sc = resolveSelfCorrectionSettings();
+        if (!sc.enabled()) {
             return;
         }
 
-        if (!belowThreshold(eval, tier1AutoBelow, tier1FactBelow)) {
+        if (!belowThreshold(eval, sc.tier1AutoBelow())) {
             return;
         }
 
         log.info(
-            "Self-correction tier1 (auto={}, fact={})",
-            eval.getAutoTotalScore(),
-            eval.getFactVerificationRate());
+            "Self-correction tier1 (auto={})",
+            eval.getAutoTotalScore());
 
         List<Slide> refreshed = loadOrderedSlides(projectId);
         boolean anyWeak = false;
@@ -623,14 +688,13 @@ public class SlideGenerationService {
             return;
         }
 
-        if (!belowThreshold(eval, tier2AutoBelow, tier2FactBelow)) {
+        if (!belowThreshold(eval, sc.tier2AutoBelow())) {
             return;
         }
 
         log.info(
-            "Self-correction tier2 full pass (auto={}, fact={})",
-            eval.getAutoTotalScore(),
-            eval.getFactVerificationRate());
+            "Self-correction tier2 full pass (auto={})",
+            eval.getAutoTotalScore());
         refreshed = loadOrderedSlides(projectId);
         for (Slide slide : refreshed) {
             if (StructuralSlideDetector.isStructuralSlide(slide.getTitle(), slide.getChapter())) {
@@ -650,6 +714,48 @@ public class SlideGenerationService {
         return title != null ? title : "";
     }
 
+    private record SelfCorrectionSettings(
+        boolean enabled,
+        double tier1AutoBelow,
+        double tier1FactBelow,
+        double tier2AutoBelow,
+        double tier2FactBelow) {
+    }
+
+    private SelfCorrectionSettings resolveSelfCorrectionSettings() {
+        try {
+            SystemConfigDto cfg = systemConfigService.getSystemConfig();
+            return new SelfCorrectionSettings(
+                cfg.getSelfCorrectionEnabled() != null ? cfg.getSelfCorrectionEnabled() : selfCorrectionEnabledDefault,
+                cfg.getSelfCorrectionTier1AutoBelow() != null ? cfg.getSelfCorrectionTier1AutoBelow() : tier1AutoBelowDefault,
+                cfg.getSelfCorrectionTier1FactBelow() != null ? cfg.getSelfCorrectionTier1FactBelow() : tier1FactBelowDefault,
+                cfg.getSelfCorrectionTier2AutoBelow() != null ? cfg.getSelfCorrectionTier2AutoBelow() : tier2AutoBelowDefault,
+                cfg.getSelfCorrectionTier2FactBelow() != null ? cfg.getSelfCorrectionTier2FactBelow() : tier2FactBelowDefault);
+        } catch (Exception e) {
+            return new SelfCorrectionSettings(
+                selfCorrectionEnabledDefault,
+                tier1AutoBelowDefault,
+                tier1FactBelowDefault,
+                tier2AutoBelowDefault,
+                tier2FactBelowDefault);
+        }
+    }
+
+    private LlmConnectionConfig resolveLlmConnection(Long projectId, GenerateSlidesRequest request) {
+        Project project = projectRepository.findById(projectId).orElse(null);
+        String presetId = null;
+        if (request != null && request.getLlmApiKeyPresetId() != null) {
+            presetId = request.getLlmApiKeyPresetId().isBlank() ? null : request.getLlmApiKeyPresetId().trim();
+        } else if (project != null) {
+            presetId = project.getLlmApiKeyPresetId();
+        }
+        return llmApiKeyService.resolveConnection(
+            presetId,
+            request != null ? request.getLlmApiKeyOverride() : null,
+            request != null ? request.getLlmBaseUrlOverride() : null,
+            request != null ? request.getLlmModelOverride() : null);
+    }
+
     private List<Slide> loadOrderedSlides(Long projectId) {
         return slideRepository.findByProject_IdOrderByPositionAsc(projectId);
     }
@@ -667,17 +773,19 @@ public class SlideGenerationService {
     /**
      * 封面 / 目录 / 问答讨论等页保留大纲要点，不调用大模型扩写。
      */
-    private SlideContentResponse preserveOutlineBullets(Slide slide) {
+    private SlideContentResponse preserveOutlineBullets(Slide slide, String presenterRole) {
         List<String> bullets = slide.getBullets();
         if (bullets == null || bullets.isEmpty()) {
-            bullets = defaultStructuralBullets(slide);
+            bullets = defaultStructuralBullets(slide, presenterRole);
         } else {
             bullets = bullets.stream()
                 .filter(b -> b != null && !b.isBlank())
                 .map(String::trim)
                 .collect(Collectors.toCollection(ArrayList::new));
             if (bullets.isEmpty()) {
-                bullets = defaultStructuralBullets(slide);
+                bullets = defaultStructuralBullets(slide, presenterRole);
+            } else if (StructuralSlideDetector.isCover(slide.getTitle(), slide.getChapter())) {
+                bullets = CoverSlideSanitizer.applyPresenterRole(bullets, presenterRole);
             }
         }
         slide.setBullets(bullets);
@@ -695,12 +803,14 @@ public class SlideGenerationService {
     }
 
     private static List<String> defaultStructuralBullets(Slide slide) {
+        return defaultStructuralBullets(slide, null);
+    }
+
+    private static List<String> defaultStructuralBullets(Slide slide, String presenterRole) {
         String title = slide.getTitle() != null ? slide.getTitle().trim() : "";
         String chapter = slide.getChapter();
         if (StructuralSlideDetector.isCover(title, chapter)) {
-            return new ArrayList<>(List.of(
-                "副标题：（可选）",
-                "汇报信息：单位 / 姓名 / 日期"));
+            return new ArrayList<>(CoverSlideSanitizer.defaultCoverBullets(presenterRole));
         }
         if (StructuralSlideDetector.isTableOfContents(title, chapter)) {
             return new ArrayList<>(List.of(
@@ -716,18 +826,18 @@ public class SlideGenerationService {
         return new ArrayList<>(List.of("（骨架页：请在大纲或本页编辑中补充简短要点）"));
     }
 
-    private static boolean belowThreshold(EvaluationReportResponse eval,
-                                          double autoBelow,
-                                          double factBelow) {
+    private static boolean belowThreshold(EvaluationReportResponse eval, double autoBelow) {
         double auto = eval.getAutoTotalScore() != null ? eval.getAutoTotalScore() : 100;
-        if (auto < autoBelow) {
-            return true;
-        }
-        Double fact = eval.getFactVerificationRate();
-        return fact != null && fact < factBelow;
+        return auto < autoBelow;
     }
 
-    private RagContextBundle buildRagContextBundle(Long projectId, String slideTitle, int topK, CorrectionTier tier) {
+    private RagContextBundle buildRagContextBundle(
+        Long projectId,
+        String slideTitle,
+        String deckTheme,
+        int topK,
+        CorrectionTier tier
+    ) {
         int base = topK > 0 ? topK : 5;
         int effective = Math.min(15, Math.max(1, base + tier.ragBoost));
         SearchRequest searchRequest = new SearchRequest();
@@ -753,17 +863,75 @@ public class SlideGenerationService {
         if (!builder.isEmpty()) {
             return new RagContextBundle(builder.toString().trim(), citationLines);
         }
-        if (slideFallbackTavily && slideTitle != null && !slideTitle.isBlank()) {
-            List<ExternalSourceDocument> docs =
-                externalKnowledgeSourceService.searchExternalSources(slideTitle, Math.max(slideFallbackLimit, 3));
-            if (!docs.isEmpty()) {
-                citationLines.addAll(slideSourceCitationService.linesFromExternalDocuments(docs, 3));
-                return new RagContextBundle(
-                    externalKnowledgeSourceService.formatDocumentsForSlidePrompt(docs, slideFallbackSnippetMaxChars),
-                    citationLines);
+        if (slideFallbackTavily) {
+            String searchQuery = externalSearchQuery(deckTheme, slideTitle);
+            if (!searchQuery.isBlank()) {
+                List<ExternalSourceDocument> docs = externalKnowledgeSourceService.searchExternalSources(
+                    searchQuery, Math.max(slideFallbackLimit, 3));
+                if (!docs.isEmpty()) {
+                    try {
+                        int indexed = externalKnowledgeSourceService.indexDocumentsIntoProject(projectId, docs);
+                        if (indexed > 0) {
+                            log.debug(
+                                "Indexed Tavily fallback snippets: projectId={} query={} segments={}",
+                                projectId,
+                                searchQuery,
+                                indexed);
+                        }
+                    } catch (Exception e) {
+                        log.warn(
+                            "Failed to index Tavily fallback snippets: projectId={} query={} error={}",
+                            projectId,
+                            searchQuery,
+                            e.getMessage());
+                    }
+                    citationLines.addAll(slideSourceCitationService.linesFromExternalDocuments(docs, 3));
+                    return new RagContextBundle(
+                        externalKnowledgeSourceService.formatDocumentsForSlidePrompt(docs, slideFallbackSnippetMaxChars),
+                        citationLines);
+                }
             }
         }
         return new RagContextBundle("", citationLines);
+    }
+
+    private void prewarmProjectRetrievalIndex(Project project) {
+        if (!slideFallbackTavily || project == null || project.getId() == null) {
+            return;
+        }
+        String query = project.getTheme() != null && !project.getTheme().isBlank()
+            ? project.getTheme().trim()
+            : (project.getTitle() != null ? project.getTitle().trim() : "");
+        if (query.isBlank()) {
+            return;
+        }
+        try {
+            List<ExternalSourceDocument> docs = externalKnowledgeSourceService.searchExternalSources(
+                query, Math.max(slideFallbackLimit, 6));
+            if (docs.isEmpty()) {
+                return;
+            }
+            int indexed = externalKnowledgeSourceService.indexDocumentsIntoProject(project.getId(), docs);
+            log.info("Prewarmed retrieval index for project {} with {} segment(s) from theme query",
+                project.getId(), indexed);
+        } catch (Exception e) {
+            log.warn("Prewarm retrieval index failed for project {}: {}", project.getId(), e.getMessage());
+        }
+    }
+
+    private static String externalSearchQuery(String deckTheme, String slideTitle) {
+        String theme = deckTheme != null ? deckTheme.trim() : "";
+        String title = slideTitle != null ? slideTitle.trim() : "";
+        if (theme.isEmpty()) {
+            return title;
+        }
+        if (title.isEmpty()) {
+            return theme;
+        }
+        if (title.contains(theme) || theme.contains(title)) {
+            return title;
+        }
+        return theme + " " + title;
     }
 
     private String formatPrompt(String template, Map<String, String> variables) {
@@ -779,6 +947,10 @@ public class SlideGenerationService {
      * 配置为 {@code inherit} 时沿用系统配置中的 llmModel。
      */
     private String resolveSlideModel(SystemConfigDto config) {
+        String fromContext = LlmRequestContext.resolveModel(null);
+        if (fromContext != null && !fromContext.isBlank()) {
+            return fromContext;
+        }
         if (slideGenerationModel != null && !slideGenerationModel.isBlank()
             && !"inherit".equalsIgnoreCase(slideGenerationModel)) {
             return slideGenerationModel;
@@ -788,13 +960,16 @@ public class SlideGenerationService {
     }
 
     private String buildSlideRequestBody(String prompt, SystemConfigDto config) {
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("model", resolveSlideModel(config));
-        payload.put("messages", List.of(Map.of("role", "user", "content", prompt)));
-        payload.put("temperature", config.getTemperature());
-        payload.put("max_tokens", slideMaxTokens);
-        payload.put("top_p", config.getTopP());
-        payload.put("top_k", config.getTopK());
+        String baseUrl = LlmRequestContext.resolveBaseUrl(
+            config.getLlmBaseUrl() != null ? config.getLlmBaseUrl() : "https://api.deepseek.com");
+        Map<String, Object> payload = LlmEndpointSupport.chatPayload(
+            resolveSlideModel(config),
+            List.of(Map.of("role", "user", "content", prompt)),
+            config.getTemperature(),
+            slideMaxTokens,
+            config.getTopP(),
+            config.getTopK(),
+            baseUrl);
         try {
             return objectMapper.writeValueAsString(payload);
         } catch (Exception e) {

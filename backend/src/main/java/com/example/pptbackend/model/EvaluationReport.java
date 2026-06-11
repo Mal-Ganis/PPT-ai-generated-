@@ -27,7 +27,8 @@ public class EvaluationReport {
     @Column(nullable = false)
     private Integer outlineLogicScore;
 
-    @Column(nullable = false)
+    /** 已停用事实准确人工分；保留列兼容旧数据，新报告可为 null */
+    @Column
     private Integer factualAccuracyScore;
 
     @Column(nullable = false)
@@ -63,6 +64,26 @@ public class EvaluationReport {
     /** 事实语义抽检：新规为 0–1（证据支持度均值）；旧数据可能仍为词重叠 0–100 */
     @Column
     private Double factVerificationRate;
+
+    /** JSON：FactCheckDetailDto[] */
+    @Column(columnDefinition = "TEXT")
+    private String factCheckDetails;
+
+    /** PASS | WARN | FAIL | UNKNOWN */
+    @Column(length = 16)
+    private String qualityGateStatus;
+
+    /** JSON：string[] */
+    @Column(columnDefinition = "TEXT")
+    private String qualityGateReasons;
+
+    /** 拇指校准时是否认同自动分 */
+    @Column
+    private Boolean calibrationAgreeWithAuto;
+
+    /** JSON：人工分与自动分的差值（校准回流） */
+    @Column(columnDefinition = "TEXT")
+    private String calibrationDeltaJson;
 
     @Column(columnDefinition = "TEXT")
     private String recommendations;
@@ -197,6 +218,46 @@ public class EvaluationReport {
 
     public void setFactVerificationRate(Double factVerificationRate) {
         this.factVerificationRate = factVerificationRate;
+    }
+
+    public String getFactCheckDetails() {
+        return factCheckDetails;
+    }
+
+    public void setFactCheckDetails(String factCheckDetails) {
+        this.factCheckDetails = factCheckDetails;
+    }
+
+    public String getQualityGateStatus() {
+        return qualityGateStatus;
+    }
+
+    public void setQualityGateStatus(String qualityGateStatus) {
+        this.qualityGateStatus = qualityGateStatus;
+    }
+
+    public String getQualityGateReasons() {
+        return qualityGateReasons;
+    }
+
+    public void setQualityGateReasons(String qualityGateReasons) {
+        this.qualityGateReasons = qualityGateReasons;
+    }
+
+    public Boolean getCalibrationAgreeWithAuto() {
+        return calibrationAgreeWithAuto;
+    }
+
+    public void setCalibrationAgreeWithAuto(Boolean calibrationAgreeWithAuto) {
+        this.calibrationAgreeWithAuto = calibrationAgreeWithAuto;
+    }
+
+    public String getCalibrationDeltaJson() {
+        return calibrationDeltaJson;
+    }
+
+    public void setCalibrationDeltaJson(String calibrationDeltaJson) {
+        this.calibrationDeltaJson = calibrationDeltaJson;
     }
 
     public String getRecommendations() {

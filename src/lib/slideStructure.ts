@@ -16,7 +16,6 @@ export async function syncProjectSlidesStructure(
   slides: SlideData[],
 ): Promise<SlideData[]> {
   const pptSnapshot = slides.map((s) => [...(s.pptContent ?? [])]);
-  const contentSnapshot = slides.map((s) => [...s.content]);
   const sourcesSnapshot = slides.map((s) => (s.sources ? [...s.sources] : undefined));
   const chapterSnapshot = slides.map((s) => s.chapter);
 
@@ -30,8 +29,8 @@ export async function syncProjectSlidesStructure(
     title: slides[i]?.title ?? serverSlide.title,
     chapter: chapterSnapshot[i] ?? serverSlide.chapter,
     content:
-      contentSnapshot[i]?.length > 0
-        ? contentSnapshot[i]
+      slides[i]?.content != null
+        ? [...slides[i].content]
         : serverSlide.content.length > 0
           ? serverSlide.content
           : [],
@@ -69,7 +68,7 @@ export async function addProjectSlide(
   const newSlide: SlideData = {
     id: Date.now(),
     title: '新页面',
-    content: ['新要点'],
+    content: [],
     pptContent: [],
   };
   const next = [...slides, newSlide];
@@ -94,8 +93,23 @@ export async function addProjectSlide(
         bullets: merged[newIndex].content,
       });
     } catch {
-      // 保留占位要点，用户可手动编辑
+      // 保留占位，用户可手动编辑
     }
+  } else if (merged[newIndex]?.slideId) {
+    merged = [...merged];
+    merged[newIndex] = {
+      ...merged[newIndex],
+      title: merged[newIndex].title?.trim() || '新页面',
+      content: [],
+      pptContent: [],
+      sources: undefined,
+    };
+    await updateProjectSlide(projectId, merged[newIndex].slideId!, {
+      title: merged[newIndex].title,
+      bullets: [],
+      pptBullets: [],
+      sources: [],
+    });
   }
 
   return { slides: merged, newIndex };

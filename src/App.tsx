@@ -10,6 +10,7 @@ import ContentSection from './sections/ContentSection';
 import PreviewSection from './sections/PreviewSection';
 import EvaluationSection from './sections/EvaluationSection';
 import SystemConfigSection from './sections/SystemConfigSection';
+import UserManagementSection from './sections/UserManagementSection';
 import ProjectsSection from './sections/ProjectsSection';
 import Footer from './sections/Footer';
 import SlideDetailView from './pages/SlideDetailView';
@@ -29,12 +30,14 @@ import {
   extractPptDisplayContents,
   fetchProject,
   fetchProjectForSlides,
+  fetchEvaluationReports,
   type ProjectOutlineResponse,
   type SystemConfig,
 } from './lib/backend';
 import { buildOutlinePayload, mapDetailToSlides } from './lib/slideMappers';
 import {
   clearMainFlowSession,
+  getAppStepBackLabel,
   isWorkflowStep,
   getResumeSessionFromLocationState,
   loadMainFlowSession,
@@ -47,6 +50,8 @@ import {
   slidesHaveGeneratedContent,
 } from './lib/projectProgress';
 import { projectNeedsPptExtraction, slidesHaveReadyPreview } from './lib/pptExtraction';
+import { buildLlmApiKeyRequest, selectionFromStored } from './lib/llmApiKey';
+import { buildEvaluationCompleteToast } from './lib/evaluationQuality';
 import {
   canGoToWorkflowStep,
   getWorkflowProgress,
@@ -62,6 +67,7 @@ export type AppStep =
   | 'preview'
   | 'evaluation'
   | 'config'
+  | 'users'
   | 'projects';
 
 export interface SlideData {
@@ -81,6 +87,7 @@ export interface SlideData {
 export interface OutlineData {
   title: string;
   presentationDurationMinutes?: number;
+  presenterRole?: string | null;
   slides: SlideData[];
 }
 
@@ -88,6 +95,7 @@ function mapOutlineResponse(outline: ProjectOutlineResponse): OutlineData {
   return {
     title: outline.title,
     presentationDurationMinutes: outline.presentationDurationMinutes,
+    presenterRole: outline.presenterRole ?? null,
     slides: outline.slides.map((s) => ({
       id: s.slideId != null ? Number(s.slideId) : s.id,
       slideId: s.slideId != null ? Number(s.slideId) : undefined,
@@ -101,7 +109,22 @@ function mapOutlineResponse(outline: ProjectOutlineResponse): OutlineData {
 
 function ProjectsPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { canWrite } = useAuth();
+  const returnTo = (location.state as { returnTo?: AppStep } | null)?.returnTo;
+
+  const flowBack =
+    returnTo != null
+      ? {
+          label: getAppStepBackLabel(returnTo),
+          onClick: () =>
+            navigate('/', {
+              replace: true,
+              state: { resumeMainFlow: Date.now(), resumeStep: returnTo },
+            }),
+        }
+      : undefined;
+
   return (
     <div className="min-h-screen bg-[#f3f3f3]">
       <ProjectsSection
@@ -109,6 +132,7 @@ function ProjectsPage() {
           navigate('/', { state: { openProjectId: id, openProjectStep: step } })
         }
         canDelete={canWrite}
+        flowBack={flowBack}
       />
     </div>
   );
@@ -131,6 +155,11 @@ export function MainFlow() {
     type: 'topic' | 'document';
     content: string;
     presentationDurationMinutes?: number;
+    presenterRole?: string;
+    llmApiKeyPresetId?: string | null;
+    llmApiKeyOverride?: string;
+    llmBaseUrlOverride?: string;
+    llmModelOverride?: string;
   } | null>(() => resumeSessionOnMount?.inputData ?? null);
   const [outlineData, setOutlineData] = useState<OutlineData | null>(
     () => resumeSessionOnMount?.outlineData ?? null,
@@ -149,6 +178,9 @@ export function MainFlow() {
     );
   });
   const sessionHydratedRef = useRef(resumeSessionOnMount != null);
+  const [evaluationReturnStep, setEvaluationReturnStep] = useState<AppStep>(
+    () => resumeSessionOnMount?.evaluationReturnStep ?? 'preview',
+  );
 
   const bumpOutlineRevision = useCallback(() => {
     setOutlineRevision((r) => r + 1);
@@ -156,7 +188,7 @@ export function MainFlow() {
 
   const handleStart = () => {
     if (!canWrite) {
-      toast.error('只读账号无法创建新项目，请从「历史项目」查看已有内容');
+      navigate('/projects');
       return;
     }
     setCurrentStep('input');
@@ -165,28 +197,54 @@ export function MainFlow() {
   const handleInputSubmit = async (
     type: 'topic' | 'document',
     content: string,
-    meta?: { fileName?: string; formData?: FormData; presentationDurationMinutes?: number },
+    meta?: {
+      fileName?: string;
+      formData?: FormData;
+      presentationDurationMinutes?: number;
+      presenterRole?: string;
+      llmApiKeyPresetId?: string | null;
+      llmApiKeyOverride?: string;
+      llmBaseUrlOverride?: string;
+      llmModelOverride?: string;
+    },
   ) => {
     const duration = meta?.presentationDurationMinutes ?? 15;
+    const role = meta?.presenterRole?.trim() || undefined;
+    const llmApiKey = buildLlmApiKeyRequest(
+      selectionFromStored(
+        meta?.llmApiKeyPresetId,
+        meta?.llmApiKeyOverride,
+        meta?.llmBaseUrlOverride,
+        meta?.llmModelOverride,
+      ),
+    );
+    const inputPatch = {
+      presentationDurationMinutes: duration,
+      presenterRole: role,
+      llmApiKeyPresetId: meta?.llmApiKeyOverride?.trim() ? null : (meta?.llmApiKeyPresetId ?? null),
+      llmApiKeyOverride: meta?.llmApiKeyOverride?.trim() || undefined,
+      llmBaseUrlOverride: meta?.llmBaseUrlOverride?.trim() || undefined,
+      llmModelOverride: meta?.llmModelOverride?.trim() || undefined,
+    };
     try {
       if (type === 'topic') {
-        setInputData({ type, content, presentationDurationMinutes: duration });
-        const result = await createProjectFromTopic(content, duration);
+        setInputData({ type, content, ...inputPatch });
+        const result = await createProjectFromTopic(content, duration, role, llmApiKey);
         setProjectId(result.projectId);
         setOutlineData(mapOutlineResponse(result));
       } else if (meta?.formData) {
-        const result = await uploadDocumentFile(meta.formData, duration);
+        const result = await uploadDocumentFile(meta.formData, duration, role, llmApiKey);
         setProjectId(result.projectId);
         setOutlineData(mapOutlineResponse(result));
         setInputData({
           type: 'document',
           content: result.title || meta.fileName?.replace(/\.[^/.]+$/, '') || '文档',
-          presentationDurationMinutes: duration,
+          ...inputPatch,
         });
       } else {
-        setInputData({ type, content, presentationDurationMinutes: duration });
+        setInputData({ type, content, ...inputPatch });
         const docTitle = meta?.fileName?.replace(/\.[^/.]+$/, '') || '上传文档';
-        const result = await createProjectFromDocument(docTitle, content, duration);
+        const result = await createProjectFromDocument(docTitle, content, duration, role, llmApiKey);
         setProjectId(result.projectId);
         setOutlineData(mapOutlineResponse(result));
       }
@@ -219,6 +277,10 @@ export function MainFlow() {
         {
           inputType: inputData?.type ?? 'topic',
           inputContent: inputData?.content ?? '',
+          llmApiKeyPresetId: inputData?.llmApiKeyPresetId ?? null,
+          llmApiKeyOverride: inputData?.llmApiKeyOverride,
+          llmBaseUrlOverride: inputData?.llmBaseUrlOverride,
+          llmModelOverride: inputData?.llmModelOverride,
         },
         (st) => {
           const msg =
@@ -231,6 +293,16 @@ export function MainFlow() {
       );
       setFinalSlides(mapDetailToSlides(detail));
       setCurrentStep('content');
+      try {
+        const evals = await fetchEvaluationReports(projectId);
+        if (evals.length > 0) {
+          toast.success(buildEvaluationCompleteToast(evals[0]), { duration: 7000 });
+        } else {
+          toast.success('正文生成完成，可继续编辑各页内容');
+        }
+      } catch {
+        toast.success('正文生成完成，可继续编辑各页内容');
+      }
     } catch (error) {
       console.error('Error generating content:', error);
       if (projectId) {
@@ -324,6 +396,9 @@ export function MainFlow() {
         hasGenerated &&
         slidesHaveReadyPreview(slides ?? []),
     );
+    if (session.evaluationReturnStep) {
+      setEvaluationReturnStep(session.evaluationReturnStep);
+    }
     if (session.outlineData) {
       setOutlineRevision((r) => r + 1);
     }
@@ -334,10 +409,16 @@ export function MainFlow() {
       const detail = await fetchProject(id);
       const mapped = mapDetailToSlides(detail);
       setProjectId(id);
-      setInputData({ type: 'topic', content: detail.theme });
+      setInputData({
+        type: 'topic',
+        content: detail.theme,
+        presenterRole: detail.presenterRole ?? undefined,
+        llmApiKeyPresetId: detail.llmApiKeyPresetId ?? null,
+      });
       setOutlineData({
         title: detail.title,
         presentationDurationMinutes: detail.presentationDurationMinutes,
+        presenterRole: detail.presenterRole ?? null,
         slides: mapped.map((s) => ({
           ...s,
           content: s.content.length ? s.content : ['（待编辑要点）'],
@@ -366,16 +447,20 @@ export function MainFlow() {
     [bumpOutlineRevision],
   );
 
-  const handleShowEvaluations = () => {
-    setCurrentStep('evaluation');
-  };
-
   const handleShowConfig = () => {
     if (!canConfig) {
       toast.error('仅管理员可修改系统配置');
       return;
     }
     setCurrentStep('config');
+  };
+
+  const handleShowUsers = () => {
+    if (!canConfig) {
+      toast.error('仅管理员可管理用户与权限');
+      return;
+    }
+    setCurrentStep('users');
   };
 
   const handleShowProjects = () => {
@@ -416,12 +501,22 @@ export function MainFlow() {
           presentationDurationMinutes: minutes,
           inputType: inputData?.type ?? 'topic',
           inputContent: inputData?.content ?? trimmed,
+          presenterRole: inputData?.presenterRole ?? null,
+          llmApiKeyPresetId: inputData?.llmApiKeyPresetId ?? null,
+          llmApiKeyOverride: inputData?.llmApiKeyOverride,
+          llmBaseUrlOverride: inputData?.llmBaseUrlOverride,
+          llmModelOverride: inputData?.llmModelOverride,
         });
         setOutlineData(mapOutlineResponse(result));
         setInputData((prev) =>
           prev
             ? { ...prev, content: trimmed }
-            : { type: 'topic', content: trimmed, presentationDurationMinutes: minutes },
+            : {
+                type: 'topic',
+                content: trimmed,
+                presentationDurationMinutes: minutes,
+                presenterRole: undefined,
+              },
         );
         setFinalSlides(null);
         setPreviewUnlocked(false);
@@ -462,6 +557,45 @@ export function MainFlow() {
     [workflowProgress, projectId],
   );
 
+  const handleShowEvaluations = useCallback(() => {
+    let returnStep: AppStep = 'home';
+    if (isWorkflowStep(currentStep)) {
+      returnStep = currentStep;
+    } else if (workflowProgress.hasPreview) {
+      returnStep = 'preview';
+    } else if (workflowProgress.hasContent) {
+      returnStep = 'content';
+    } else if (workflowProgress.hasOutline) {
+      returnStep = 'outline';
+    } else if (workflowProgress.hasInput) {
+      returnStep = 'input';
+    }
+    setEvaluationReturnStep(returnStep);
+    setCurrentStep('evaluation');
+  }, [currentStep, workflowProgress]);
+
+  const getStepBackLabel = useCallback((step: AppStep): string => getAppStepBackLabel(step), []);
+
+  const handleBackFromEvaluation = useCallback(() => {
+    const target = evaluationReturnStep;
+    if (target === 'home') {
+      setCurrentStep('home');
+      return;
+    }
+    if (isWorkflowStep(target) && canGoToWorkflowStep(target, workflowProgress)) {
+      handleWorkflowNavigate(target);
+      return;
+    }
+    const fallbacks: WorkflowStep[] = ['preview', 'content', 'outline', 'input'];
+    for (const step of fallbacks) {
+      if (canGoToWorkflowStep(step, workflowProgress)) {
+        handleWorkflowNavigate(step);
+        return;
+      }
+    }
+    setCurrentStep('home');
+  }, [evaluationReturnStep, workflowProgress, handleWorkflowNavigate]);
+
   const handleNavbarNavigate = useCallback(
     (step: AppStep) => {
       if (step === 'input' || step === 'outline' || step === 'content' || step === 'preview') {
@@ -495,7 +629,7 @@ export function MainFlow() {
         clearMainFlowSession();
         return;
       }
-      if (!isWorkflowStep(currentStep) && currentStep !== 'projects') {
+      if (!isWorkflowStep(currentStep) && currentStep !== 'projects' && currentStep !== 'evaluation') {
         return;
       }
       const outlineToSave =
@@ -509,9 +643,10 @@ export function MainFlow() {
         outlineData: outlineToSave,
         finalSlides,
         previewUnlocked,
+        evaluationReturnStep: currentStep === 'evaluation' ? evaluationReturnStep : undefined,
       });
     },
-    [currentStep, projectId, inputData, outlineData, finalSlides, previewUnlocked],
+    [currentStep, projectId, inputData, outlineData, finalSlides, previewUnlocked, evaluationReturnStep],
   );
 
   useEffect(() => {
@@ -523,6 +658,7 @@ export function MainFlow() {
     const st = (location.state ?? null) as {
       resetMainFlow?: number;
       resumeMainFlow?: number;
+      resumeStep?: AppStep;
       openProjectId?: number;
       openProjectStep?: WorkflowStep;
     } | null;
@@ -538,6 +674,9 @@ export function MainFlow() {
       const session = loadMainFlowSession();
       if (session) {
         applyMainFlowSession(session);
+      }
+      if (st.resumeStep != null) {
+        setCurrentStep(st.resumeStep);
       }
       let cancelled = false;
       void (async () => {
@@ -603,6 +742,7 @@ export function MainFlow() {
         onNavigate={handleNavbarNavigate}
         onReset={handleReset}
         onOpenConfig={handleShowConfig}
+        onOpenUsers={handleShowUsers}
         userDisplayName={user?.displayName}
         userRoleLabel={user ? ROLE_LABELS[user.role] : undefined}
         canManageConfig={canConfig}
@@ -617,6 +757,7 @@ export function MainFlow() {
           onStart={handleStart}
           onShowEvaluations={handleShowEvaluations}
           onShowConfig={handleShowConfig}
+          onShowUsers={handleShowUsers}
           onShowProjects={handleShowProjects}
           canWrite={canWrite}
           canManageConfig={canConfig}
@@ -631,6 +772,12 @@ export function MainFlow() {
           initialTopic={inputData?.type === 'topic' ? inputData.content : undefined}
           initialInputType={inputData?.type}
           initialPresentationMinutes={inputData?.presentationDurationMinutes}
+          initialPresenterRole={inputData?.presenterRole}
+          initialLlmApiKeyPresetId={inputData?.llmApiKeyPresetId}
+          initialLlmApiKeyOverride={inputData?.llmApiKeyOverride}
+          initialLlmBaseUrlOverride={inputData?.llmBaseUrlOverride}
+          initialLlmModelOverride={inputData?.llmModelOverride}
+          canCustomizeRole={canWrite}
         />
       )}
 
@@ -659,6 +806,10 @@ export function MainFlow() {
           deckTheme={inputData?.content ?? outlineData?.title ?? ''}
           inputType={inputData?.type ?? 'topic'}
           inputContent={inputData?.content ?? ''}
+          llmApiKeyPresetId={inputData?.llmApiKeyPresetId}
+          llmApiKeyOverride={inputData?.llmApiKeyOverride}
+          llmBaseUrlOverride={inputData?.llmBaseUrlOverride}
+          llmModelOverride={inputData?.llmModelOverride}
           workflowProgress={workflowProgress}
           onGoToStep={handleWorkflowNavigate}
           onSlidesChange={setFinalSlides}
@@ -679,15 +830,30 @@ export function MainFlow() {
           onGoToStep={handleWorkflowNavigate}
           onSlidesChange={setFinalSlides}
           onReset={handleReset}
+          onShowEvaluations={handleShowEvaluations}
         />
       )}
 
       {currentStep === 'evaluation' && (
-        <EvaluationSection defaultProjectId={projectId} />
+        <EvaluationSection
+          defaultProjectId={projectId}
+          flowBack={
+            evaluationReturnStep !== 'home'
+              ? {
+                  label: getStepBackLabel(evaluationReturnStep),
+                  onClick: handleBackFromEvaluation,
+                }
+              : undefined
+          }
+        />
       )}
 
       {currentStep === 'config' && (
         <SystemConfigSection onBack={() => setCurrentStep('home')} onSave={(_config: SystemConfig) => {}} />
+      )}
+
+      {currentStep === 'users' && (
+        <UserManagementSection onBack={() => setCurrentStep('home')} />
       )}
 
       {currentStep === 'projects' && (
@@ -732,7 +898,7 @@ export default function App() {
         <Route
           path="/project/:projectId/slide/:slideId"
           element={
-            <ProtectedRoute roles={['ADMIN', 'EDITOR']}>
+            <ProtectedRoute requireWrite>
               <SlideDetailView />
             </ProtectedRoute>
           }

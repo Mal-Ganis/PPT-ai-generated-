@@ -1,18 +1,26 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowLeft, FolderOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import type { FlowProjectsNavState } from '@/lib/mainFlowSession';
 
 interface FlowExitNavProps {
   className?: string;
   /** 当前已在历史项目列表页时设为 true，隐藏「项目列表」入口 */
   onProjectsPage?: boolean;
+  /**
+   * 主流程页内返回上一步（如评估页→预览）。
+   * 提供后主按钮为「返回 xxx」，「返回首页」降为次要操作。
+   */
+  flowBack?: { label: string; onClick: () => void };
+  /** 跳转 /projects 时附带，便于项目列表页显示正确的返回目标 */
+  projectsLinkState?: FlowProjectsNavState;
 }
 
 /**
  * 主流程在 `/` 的 state 在切到子路由（如单页详情）时会随 MainFlow 卸载而丢失；
  * 流程进度由 sessionStorage 持久化，子路由应使用「返回流程」而非裸 navigate('/')。
  */
-export function FlowExitNav({ className, onProjectsPage }: FlowExitNavProps) {
+export function FlowExitNav({ className, onProjectsPage, flowBack, projectsLinkState }: FlowExitNavProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const isProjectsRoute = location.pathname === '/projects' || onProjectsPage === true;
@@ -38,16 +46,51 @@ export function FlowExitNav({ className, onProjectsPage }: FlowExitNavProps) {
   return (
     <div className={`flex flex-wrap items-center gap-2 ${className ?? ''}`}>
       {!isMainFlowRoute ? (
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={resumeFlow}
-          className="border-[#3898ec]/40 text-[#3898ec] h-9"
-        >
-          <ArrowLeft className="w-4 h-4 mr-1.5 shrink-0" />
-          返回流程
-        </Button>
+        flowBack ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={flowBack.onClick}
+            className="border-[#3898ec]/40 text-[#3898ec] h-9"
+          >
+            <ArrowLeft className="w-4 h-4 mr-1.5 shrink-0" />
+            {flowBack.label}
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={resumeFlow}
+            className="border-[#3898ec]/40 text-[#3898ec] h-9"
+          >
+            <ArrowLeft className="w-4 h-4 mr-1.5 shrink-0" />
+            返回流程
+          </Button>
+        )
+      ) : flowBack ? (
+        <>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={flowBack.onClick}
+            className="border-[#3898ec]/40 text-[#3898ec] h-9"
+          >
+            <ArrowLeft className="w-4 h-4 mr-1.5 shrink-0" />
+            {flowBack.label}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={goHome}
+            className="text-[#1f1f1f]/55 h-9"
+          >
+            返回首页
+          </Button>
+        </>
       ) : (
         <Button
           type="button"
@@ -62,7 +105,7 @@ export function FlowExitNav({ className, onProjectsPage }: FlowExitNavProps) {
       )}
       {!isProjectsRoute && (
         <Button variant="outline" size="sm" asChild className="border-gray-200 h-9">
-          <Link to="/projects">
+          <Link to="/projects" state={projectsLinkState}>
             <FolderOpen className="w-4 h-4 mr-1.5 shrink-0" />
             项目列表
           </Link>

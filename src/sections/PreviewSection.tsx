@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   FileText,
   RotateCcw,
@@ -9,7 +10,10 @@ import {
   Sparkles,
   Plus,
   Trash2,
+  ExternalLink,
 } from 'lucide-react';
+import { EvaluationQualityCard } from '@/components/EvaluationQualityCard';
+import { getWeakSlideIssues } from '@/lib/evaluationQuality';
 import { SlideTitleSortList } from '@/components/SlideTitleSortList';
 import { FlowExitNav } from '@/components/FlowExitNav';
 import { WorkflowStepActions } from '@/components/WorkflowStepActions';
@@ -28,10 +32,14 @@ import {
   extractPptDisplayContents,
   extractPptDisplayForSlide,
   fetchEvaluationReports,
+  triggerAutoEvaluation,
   updateProjectSlide,
   type EvaluationReport,
 } from '@/lib/backend';
+import { buildEvaluationCompleteToast } from '@/lib/evaluationQuality';
+import { toast } from 'sonner';
 import { SlideCitationEditor } from '@/components/SlideCitationEditor';
+import { SlideIdLabel } from '@/components/SlideIdLabel';
 import {
   citationAttentionSummary,
   indicesNeedingCitationAttention,
@@ -62,6 +70,7 @@ interface PreviewSectionProps {
   previewUnlocked?: boolean;
   onGoToStep: (step: WorkflowStep) => void;
   onReset: () => void;
+  onShowEvaluations?: () => void;
 }
 
 const PreviewSection = ({
@@ -76,6 +85,7 @@ const PreviewSection = ({
   previewUnlocked = false,
   onGoToStep,
   onReset,
+  onShowEvaluations,
 }: PreviewSectionProps) => {
   const [slides, setSlides] = useState<SlideData[]>(initialSlides);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
@@ -89,6 +99,7 @@ const PreviewSection = ({
     }
   }, [projectId, slides.length]);
   const [latestEval, setLatestEval] = useState<EvaluationReport | null>(null);
+  const [isEvaluating, setIsEvaluating] = useState(false);
   const [extractMessage, setExtractMessage] = useState('');
   const [isExtracting, setIsExtracting] = useState(false);
   const [isStructuring, setIsStructuring] = useState(false);
@@ -197,6 +208,15 @@ const PreviewSection = ({
   const currentSlide = slides[currentSlideIndex];
   const displayBullets = currentSlide?.pptContent ?? [];
 
+  const weakIssues = useMemo(() => getWeakSlideIssues(slides), [slides]);
+  const weakReasonByIndex = useMemo(() => {
+    const map = new Map<number, string>();
+    weakIssues.forEach((issue) => {
+      map.set(issue.index, issue.reasons.join('；'));
+    });
+    return map;
+  }, [weakIssues]);
+
   useEffect(() => {
     if (projectId == null) return;
     let cancelled = false;
@@ -211,6 +231,23 @@ const PreviewSection = ({
       cancelled = true;
     };
   }, [projectId]);
+
+  const handleReEvaluate = async () => {
+    if (projectId == null) {
+      toast.error('缺少项目 ID，无法评估');
+      return;
+    }
+    setIsEvaluating(true);
+    try {
+      const report = await triggerAutoEvaluation(projectId);
+      setLatestEval(report);
+      toast.success(buildEvaluationCompleteToast(report), { duration: 6000 });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '重新评估失败');
+    } finally {
+      setIsEvaluating(false);
+    }
+  };
 
   const runExtractAll = useCallback(
     async (force = false) => {
@@ -437,16 +474,6 @@ const PreviewSection = ({
               <p className="text-[#1f1f1f]/60">
                 左侧讲稿区加高便于阅读；右侧为 16:9 幻灯片预览（均可编辑，自动保存）
               </p>
-              {latestEval && (
-                <p className="text-sm text-[#1f1f1f]/70 mt-2">
-                  自动总分{' '}
-                  <span className="font-semibold text-[#3898ec]">
-                    {latestEval.autoTotalScore != null
-                      ? `${(latestEval.autoTotalScore / 20).toFixed(1)}/5`
-                      : '—'}
-                  </span>
-                </p>
-              )}
             </div>
             <div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full lg:w-auto">
               <WorkflowStepActions
@@ -485,6 +512,58 @@ const PreviewSection = ({
             </div>
           </div>
 
+          {projectId != null && (
+            <div className="mb-6">
+              <EvaluationQualityCard
+                report={latestEval}
+                onReEvaluate={() => void handleReEvaluate()}
+                isReEvaluating={isEvaluating}
+                onViewFullReport={onShowEvaluations}
+              />
+            </div>
+          )}
+
+          {weakIssues.length > 0 && projectId != null && (
+            <div className="mb-6 rounded-2xl border border-red-200 bg-red-50/60 p-4">
+              <p className="text-sm font-medium text-red-900 mb-3">
+                薄弱页标注（{weakIssues.length} 页建议加强）
+              </p>
+              <ul className="space-y-2">
+                {weakIssues.map((issue) => (
+                  <li
+                    key={issue.slide.slideId ?? issue.slide.id}
+                    className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 rounded-xl bg-white/80 border border-red-100 px-3 py-2"
+                  >
+                    <div className="min-w-0">
+                      <button
+                        type="button"
+                        onClick={() => setCurrentSlideIndex(issue.index)}
+                        className="text-sm font-medium text-[#1f1f1f] hover:text-[#3898ec] text-left truncate"
+                      >
+                        第 {issue.index + 1} 页 · {issue.slide.title}
+                        {issue.slide.slideId != null && (
+                          <span className="text-xs font-mono font-normal text-[#1f1f1f]/45 ml-1.5">
+                            slideId {issue.slide.slideId}
+                          </span>
+                        )}
+                      </button>
+                      <p className="text-xs text-red-800/80 mt-0.5">{issue.reasons.join('；')}</p>
+                    </div>
+                    {issue.slide.slideId != null && (
+                      <Link
+                        to={`/project/${projectId}/slide/${issue.slide.slideId}`}
+                        className="inline-flex items-center gap-1 text-xs font-medium text-[#3898ec] hover:underline shrink-0"
+                      >
+                        高级编辑
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </Link>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {(extractMessage || saveHint) && (
             <div className="mb-4 rounded-xl border border-[#3898ec]/20 bg-[#3898ec]/10 px-4 py-3 text-sm text-[#1f1f1f]">
               {extractMessage}
@@ -500,6 +579,11 @@ const PreviewSection = ({
                   {citationPendingIndices.length} 页待补引用（封面/目录/Q&A 除外）· 琥珀色标签可点击
                 </p>
               )}
+              {weakIssues.length > 0 && (
+                <p className="text-xs text-red-800 bg-red-50 border border-red-200 rounded-lg px-2 py-1.5 mb-2">
+                  {weakIssues.length} 页内容薄弱（要点不足或无引用）· 红色标签可点击
+                </p>
+              )}
               <SlideTitleSortList
                 slides={slides}
                 currentIndex={currentSlideIndex}
@@ -508,6 +592,7 @@ const PreviewSection = ({
                 disabled={busy}
                 layout="horizontal"
                 needsCitationAttention={(_, index) => citationPendingIndices.includes(index)}
+                qualityAttentionReason={(_, index) => weakReasonByIndex.get(index)}
               />
             </div>
             <div className="flex items-center gap-2 shrink-0">
@@ -520,8 +605,11 @@ const PreviewSection = ({
               >
                 <ChevronLeft className="w-5 h-5" />
               </button>
-              <span className="text-sm text-[#1f1f1f]/60 tabular-nums">
-                {currentSlideIndex + 1} / {slides.length}
+              <span className="text-sm text-[#1f1f1f]/60 tabular-nums text-center flex flex-col items-center gap-0.5">
+                <span>
+                  {currentSlideIndex + 1} / {slides.length}
+                </span>
+                <SlideIdLabel slideId={currentSlide?.slideId} />
               </span>
               <button
                 type="button"
@@ -539,8 +627,9 @@ const PreviewSection = ({
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6 lg:items-start">
               {/* 左：讲稿区加高，便于阅读长文稿（高于右侧 16:9 预览） */}
               <div className="lg:col-span-5 flex flex-col">
-                <div className="flex items-center gap-2 mb-2 text-sm font-semibold text-[#1f1f1f] shrink-0 min-h-[1.25rem]">
-                  文稿与要点
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-2 text-sm font-semibold text-[#1f1f1f] shrink-0 min-h-[1.25rem]">
+                  <span>文稿与要点</span>
+                  <SlideIdLabel slideId={currentSlide.slideId} />
                 </div>
                 <div className="mb-3 space-y-1.5">
                   <label className="text-xs font-medium text-[#1f1f1f]/50">页面标题</label>
@@ -641,10 +730,11 @@ const PreviewSection = ({
 
               {/* 右：16:9 预览；滚动页面时保持可见 */}
               <div className="lg:col-span-7 flex flex-col lg:sticky lg:top-24 self-start">
-                <div className="flex items-center gap-2 mb-2 text-sm font-semibold text-[#1f1f1f] shrink-0 min-h-[1.25rem]">
+                <div className="flex flex-wrap items-center gap-2 mb-2 text-sm font-semibold text-[#1f1f1f] shrink-0 min-h-[1.25rem]">
                   <Presentation className="w-4 h-4 text-[#3898ec]" />
                   幻灯片预览
                   <span className="text-xs font-normal text-[#1f1f1f]/45">16:9</span>
+                  <SlideIdLabel slideId={currentSlide.slideId} className="ml-auto font-normal" />
                 </div>
                 <div className="bg-white rounded-2xl shadow-lg p-3 sm:p-4">
                   <div className="relative w-full aspect-video overflow-hidden rounded-lg bg-gradient-to-br from-[#1f1f1f] to-[#2a2a2a]">
@@ -683,8 +773,11 @@ const PreviewSection = ({
                   >
                     <ChevronLeft className="w-5 h-5" />
                   </Button>
-                  <span className="text-sm text-[#1f1f1f]/70 tabular-nums min-w-[5.5rem] text-center">
-                    第 {currentSlideIndex + 1} / {slides.length} 页
+                  <span className="text-sm text-[#1f1f1f]/70 tabular-nums min-w-[5.5rem] text-center flex flex-col items-center gap-0.5">
+                    <span>
+                      第 {currentSlideIndex + 1} / {slides.length} 页
+                    </span>
+                    <SlideIdLabel slideId={currentSlide.slideId} />
                   </span>
                   <Button
                     type="button"

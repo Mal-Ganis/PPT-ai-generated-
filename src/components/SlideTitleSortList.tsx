@@ -13,6 +13,8 @@ export interface SlideTitleSortListProps {
   layout?: 'vertical' | 'horizontal';
   /** 返回 true 时在侧栏标题旁标「待补引用」 */
   needsCitationAttention?: (slide: SlideData, index: number) => boolean;
+  /** 返回薄弱原因文案时在标题旁标红（质量评估） */
+  qualityAttentionReason?: (slide: SlideData, index: number) => string | undefined;
 }
 
 /**
@@ -26,6 +28,7 @@ export function SlideTitleSortList({
   disabled = false,
   layout = 'vertical',
   needsCitationAttention,
+  qualityAttentionReason,
 }: SlideTitleSortListProps) {
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [dropTarget, setDropTarget] = useState<number | null>(null);
@@ -65,6 +68,8 @@ export function SlideTitleSortList({
         const isActive = index === currentIndex;
         const isDropHint = dropTarget === index && dragFrom != null && dragFrom !== index;
         const needsCitation = needsCitationAttention?.(slide, index) ?? false;
+        const weakReason = qualityAttentionReason?.(slide, index);
+        const needsWeak = Boolean(weakReason);
 
         return (
           <div
@@ -113,6 +118,11 @@ export function SlideTitleSortList({
               onDragStart={(e) => startDrag(e, index)}
               onDragEnd={finishDrag}
               onClick={() => onSelect(index)}
+              title={
+                slide.slideId != null
+                  ? `第 ${index + 1} 页 · slideId ${slide.slideId} · ${slide.title}`
+                  : `第 ${index + 1} 页 · ${slide.title}`
+              }
               className={cn(
                 'text-left transition-all duration-300 min-w-0',
                 !disabled && 'cursor-grab active:cursor-grabbing',
@@ -121,7 +131,9 @@ export function SlideTitleSortList({
                       'flex-1 p-4 rounded-xl',
                       isActive
                         ? 'bg-[#3898ec] text-white shadow-lg'
-                        : needsCitation
+                        : needsWeak
+                          ? 'bg-red-50 hover:bg-red-100/80 text-[#1f1f1f] border border-red-200'
+                          : needsCitation
                           ? 'bg-amber-50 hover:bg-amber-100/80 text-[#1f1f1f] border border-amber-200'
                           : 'bg-white hover:bg-gray-50 text-[#1f1f1f]',
                     )
@@ -129,7 +141,9 @@ export function SlideTitleSortList({
                       'px-3 py-1.5 rounded-lg text-sm',
                       isActive
                         ? 'bg-[#3898ec] text-white'
-                        : needsCitation
+                        : needsWeak
+                          ? 'bg-red-50 text-red-950 border border-red-200 hover:bg-red-100/80'
+                          : needsCitation
                           ? 'bg-amber-50 text-amber-950 border border-amber-200 hover:bg-amber-100/80'
                           : 'bg-white text-[#1f1f1f]/70 hover:bg-gray-50',
                     ),
@@ -146,7 +160,16 @@ export function SlideTitleSortList({
                     {index + 1}
                   </span>
                   <span className="font-medium truncate flex-1 min-w-0">{slide.title}</span>
-                  {needsCitation && !isActive && (
+                  {needsWeak && !isActive && (
+                    <span
+                      className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-medium text-red-800 bg-red-100 px-1.5 py-0.5 rounded-full max-w-[8rem] truncate"
+                      title={weakReason}
+                    >
+                      <AlertCircle className="w-3 h-3 shrink-0" />
+                      待加强
+                    </span>
+                  )}
+                  {needsCitation && !needsWeak && !isActive && (
                     <span
                       className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-medium text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded-full"
                       title="待补充引用或核实要点"
@@ -159,7 +182,10 @@ export function SlideTitleSortList({
               ) : (
                 <span className="whitespace-nowrap inline-flex items-center gap-1">
                   {index + 1}. {slide.title}
-                  {needsCitation && (
+                  {needsWeak && (
+                    <AlertCircle className="w-3.5 h-3.5 text-red-600" aria-label={weakReason} />
+                  )}
+                  {!needsWeak && needsCitation && (
                     <AlertCircle className="w-3.5 h-3.5 text-amber-600" aria-label="待补引用" />
                   )}
                 </span>

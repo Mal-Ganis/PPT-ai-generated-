@@ -21,6 +21,10 @@ public class SystemConfig {
     @Column(name = "llm_model", nullable = false)
     private String llmModel;
 
+    /** OpenAI 兼容 Chat Completions 默认 Base URL */
+    @Column(name = "llm_base_url")
+    private String llmBaseUrl;
+
     @Column(nullable = false)
     private Double temperature;
 
@@ -47,6 +51,26 @@ public class SystemConfig {
     @Column(name = "outline_include_qa_slide")
     private Boolean outlineIncludeQaSlide = true;
 
+    /** 正文生成后是否启用 Tier1/Tier2 自纠错重生成 */
+    @Column(name = "self_correction_enabled")
+    private Boolean selfCorrectionEnabled = false;
+
+    @Column(name = "self_correction_tier1_auto_below")
+    private Double selfCorrectionTier1AutoBelow = 76.0;
+
+    @Column(name = "self_correction_tier1_fact_below")
+    private Double selfCorrectionTier1FactBelow = 0.58;
+
+    @Column(name = "self_correction_tier2_auto_below")
+    private Double selfCorrectionTier2AutoBelow = 70.0;
+
+    @Column(name = "self_correction_tier2_fact_below")
+    private Double selfCorrectionTier2FactBelow = 0.48;
+
+    /** JSON：管理员配置的 LLM API 密钥预设列表 */
+    @Column(name = "llm_api_key_presets_json", columnDefinition = "TEXT")
+    private String llmApiKeyPresetsJson;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -67,6 +91,14 @@ public class SystemConfig {
 
     public void setLlmModel(String llmModel) {
         this.llmModel = llmModel;
+    }
+
+    public String getLlmBaseUrl() {
+        return llmBaseUrl;
+    }
+
+    public void setLlmBaseUrl(String llmBaseUrl) {
+        this.llmBaseUrl = llmBaseUrl;
     }
 
     public Double getTemperature() {
@@ -131,6 +163,54 @@ public class SystemConfig {
 
     public void setOutlineIncludeQaSlide(Boolean outlineIncludeQaSlide) {
         this.outlineIncludeQaSlide = outlineIncludeQaSlide;
+    }
+
+    public Boolean getSelfCorrectionEnabled() {
+        return selfCorrectionEnabled;
+    }
+
+    public void setSelfCorrectionEnabled(Boolean selfCorrectionEnabled) {
+        this.selfCorrectionEnabled = selfCorrectionEnabled;
+    }
+
+    public Double getSelfCorrectionTier1AutoBelow() {
+        return selfCorrectionTier1AutoBelow;
+    }
+
+    public void setSelfCorrectionTier1AutoBelow(Double selfCorrectionTier1AutoBelow) {
+        this.selfCorrectionTier1AutoBelow = selfCorrectionTier1AutoBelow;
+    }
+
+    public Double getSelfCorrectionTier1FactBelow() {
+        return selfCorrectionTier1FactBelow;
+    }
+
+    public void setSelfCorrectionTier1FactBelow(Double selfCorrectionTier1FactBelow) {
+        this.selfCorrectionTier1FactBelow = selfCorrectionTier1FactBelow;
+    }
+
+    public Double getSelfCorrectionTier2AutoBelow() {
+        return selfCorrectionTier2AutoBelow;
+    }
+
+    public void setSelfCorrectionTier2AutoBelow(Double selfCorrectionTier2AutoBelow) {
+        this.selfCorrectionTier2AutoBelow = selfCorrectionTier2AutoBelow;
+    }
+
+    public Double getSelfCorrectionTier2FactBelow() {
+        return selfCorrectionTier2FactBelow;
+    }
+
+    public void setSelfCorrectionTier2FactBelow(Double selfCorrectionTier2FactBelow) {
+        this.selfCorrectionTier2FactBelow = selfCorrectionTier2FactBelow;
+    }
+
+    public String getLlmApiKeyPresetsJson() {
+        return llmApiKeyPresetsJson;
+    }
+
+    public void setLlmApiKeyPresetsJson(String llmApiKeyPresetsJson) {
+        this.llmApiKeyPresetsJson = llmApiKeyPresetsJson;
     }
 
     public OffsetDateTime getCreatedAt() {

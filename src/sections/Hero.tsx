@@ -10,14 +10,18 @@ import {
   Layers,
   Settings,
   Search,
+  UserCog,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { fetchProject, listProjects } from '@/lib/backend';
+import { ViewerAccessPanel } from '@/components/ViewerAccessPanel';
+import { fetchEvaluationReports, fetchProject, listProjects } from '@/lib/backend';
+import { consumePostLoginEntrance, shouldPlayHeroIntro } from '@/lib/authEntrance';
 
 interface HeroProps {
   onStart: () => void;
   onShowEvaluations: () => void;
   onShowConfig: () => void;
+  onShowUsers?: () => void;
   onShowProjects: () => void;
   canWrite?: boolean;
   canManageConfig?: boolean;
@@ -27,15 +31,18 @@ const Hero = ({
   onStart,
   onShowEvaluations,
   onShowConfig,
+  onShowUsers,
   onShowProjects,
   canWrite = true,
   canManageConfig = false,
 }: HeroProps) => {
   const heroRef = useRef<HTMLDivElement>(null);
+  const postLoginEnter = useRef(consumePostLoginEntrance());
+  const playIntro = useRef(shouldPlayHeroIntro());
   const [stats, setStats] = useState({
     projectCount: '—',
     quality: '—',
-    factRate: '—',
+    sourceCov: '—',
     slideCount: '—',
   });
 
@@ -54,22 +61,22 @@ const Hero = ({
           (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
         );
         const detail = await fetchProject(sorted[0].id);
+        const evs = await fetchEvaluationReports(sorted[0].id).catch(() => []);
         if (cancelled) return;
-        const evs = detail.evaluations ?? [];
         const latest = evs[0];
         const auto = latest?.autoTotalScore;
-        const fact = latest?.factVerificationRate;
+        const sourceCov = latest?.autoSourceCoverageScore;
         setStats({
           projectCount: String(projects.length),
           quality:
-            auto != null && Number.isFinite(auto) ? `${(auto / 20).toFixed(1)}/5` : '—',
-          factRate:
-            fact != null && Number.isFinite(fact) ? `${Math.round(fact * 100)}%` : '—',
+            auto != null && Number.isFinite(auto) ? `${auto.toFixed(1)} 分` : '—',
+          sourceCov:
+            sourceCov != null && Number.isFinite(sourceCov) ? `${Math.round(sourceCov)} 分` : '—',
           slideCount: detail.slides?.length != null ? `${detail.slides.length} 页` : '—',
         });
       } catch {
         if (!cancelled) {
-          setStats({ projectCount: '—', quality: '—', factRate: '—', slideCount: '—' });
+          setStats({ projectCount: '—', quality: '—', sourceCov: '—', slideCount: '—' });
         }
       }
     })();
@@ -77,6 +84,30 @@ const Hero = ({
       cancelled = true;
     };
   }, []);
+
+  const introClass = () => {
+    if (postLoginEnter.current) return '';
+    if (playIntro.current) return 'animate-slide-up';
+    return '';
+  };
+
+  const introStyle = (delayMs: number): React.CSSProperties | undefined => {
+    if (postLoginEnter.current) return undefined;
+    if (playIntro.current) return { animationDelay: `${delayMs}ms` };
+    return undefined;
+  };
+
+  const fadeIntroClass = () => {
+    if (postLoginEnter.current) return '';
+    if (playIntro.current) return 'animate-fade-in';
+    return '';
+  };
+
+  const scaleIntroClass = () => {
+    if (postLoginEnter.current) return '';
+    if (playIntro.current) return 'animate-scale-in';
+    return '';
+  };
 
   useEffect(() => {
     const hero = heroRef.current;
@@ -129,12 +160,17 @@ const Hero = ({
       </div>
 
       {/* Content */}
-      <div className="relative z-10 section-container py-20">
+      <div
+        className={`relative z-10 section-container py-20 ${
+          postLoginEnter.current ? 'animate-page-enter-soft' : ''
+        }`}
+      >
         <div className="section-inner text-center">
+          <ViewerAccessPanel />
           {/* Badge */}
-          <div 
-            className="inline-flex items-center gap-2 px-4 py-2 bg-[#3898ec]/10 rounded-full mb-8 animate-fade-in"
-            style={{ animationDelay: '200ms' }}
+          <div
+            className={`inline-flex items-center gap-2 px-4 py-2 bg-[#3898ec]/10 rounded-full mb-8 ${fadeIntroClass()}`}
+            style={playIntro.current && !postLoginEnter.current ? { animationDelay: '200ms' } : undefined}
           >
             <Sparkles className="w-4 h-4 text-[#3898ec]" />
             <span className="text-sm font-medium text-[#3898ec]">基于 LLM + RAG 技术</span>
@@ -142,40 +178,43 @@ const Hero = ({
 
           {/* Main Title */}
           <h1 className="hero-title text-4xl sm:text-5xl lg:text-6xl xl:text-7xl font-bold text-[#1f1f1f] mb-6 leading-tight">
-            <span className="inline-block animate-slide-up" style={{ animationDelay: '300ms' }}>
+            <span className={`inline-block ${introClass()}`} style={introStyle(300)}>
               PPT 大纲
             </span>
-            <span className="inline-block animate-slide-up text-[#3898ec]" style={{ animationDelay: '400ms' }}>
+            <span className={`inline-block ${introClass()} text-[#3898ec]`} style={introStyle(400)}>
               智能生成
             </span>
             <br />
-            <span className="inline-block animate-slide-up" style={{ animationDelay: '500ms' }}>
+            <span className={`inline-block ${introClass()}`} style={introStyle(500)}>
               与内容
             </span>
-            <span className="inline-block animate-slide-up text-[#3898ec]" style={{ animationDelay: '600ms' }}>
+            <span className={`inline-block ${introClass()} text-[#3898ec]`} style={introStyle(600)}>
               深度补全
             </span>
           </h1>
 
           {/* Subtitle */}
-          <p 
-            className="hero-subtitle text-lg sm:text-xl lg:text-2xl text-[#1f1f1f]/70 mb-4 max-w-3xl mx-auto animate-slide-up"
-            style={{ animationDelay: '800ms' }}
+          <p
+            className={`hero-subtitle text-lg sm:text-xl lg:text-2xl text-[#1f1f1f]/70 mb-4 max-w-3xl mx-auto ${introClass()}`}
+            style={introStyle(800)}
           >
             从零散想法到完整演示，AI 驱动的内容创作新体验
           </p>
 
           {/* Description */}
-          <p 
-            className="text-base text-[#1f1f1f]/60 mb-10 max-w-2xl mx-auto animate-fade-in"
-            style={{ animationDelay: '1000ms' }}
+          <p
+            className={`text-base text-[#1f1f1f]/60 mb-10 max-w-2xl mx-auto ${fadeIntroClass()}`}
+            style={playIntro.current && !postLoginEnter.current ? { animationDelay: '1000ms' } : undefined}
           >
             输入主题或上传文档，AI 自动生成结构化大纲，RAG 检索补充精准内容，
             输出完整 PPT 草稿
           </p>
 
           {/* CTA Buttons */}
-          <div className="hero-buttons flex flex-col sm:flex-row items-center justify-center gap-4 animate-scale-in" style={{ animationDelay: '1200ms' }}>
+          <div
+            className={`hero-buttons flex flex-col sm:flex-row items-center justify-center gap-4 ${scaleIntroClass()}`}
+            style={playIntro.current && !postLoginEnter.current ? { animationDelay: '1200ms' } : undefined}
+          >
             <Button
               size="lg"
               className="btn-magnetic bg-[#3898ec] hover:bg-[#0082f3] text-white px-8 py-6 text-base font-semibold rounded-xl shadow-lg shadow-[#3898ec]/30 disabled:opacity-60"
@@ -212,27 +251,38 @@ const Hero = ({
               评估报告
             </Button>
             {canManageConfig && (
-              <Button
-                size="lg"
-                variant="outline"
-                className="btn-magnetic inline-flex items-center gap-2 px-8 py-6 rounded-xl border-gray-200 text-[#1f1f1f] hover:bg-gray-100"
-                onClick={onShowConfig}
-              >
-                <Settings className="w-5 h-5" />
-                系统配置
-              </Button>
+              <>
+                <Button
+                  size="lg"
+                  variant="outline"
+                  className="btn-magnetic inline-flex items-center gap-2 px-8 py-6 rounded-xl border-gray-200 text-[#1f1f1f] hover:bg-gray-100"
+                  onClick={() => onShowUsers?.()}
+                >
+                  <UserCog className="w-5 h-5" />
+                  用户管理
+                </Button>
+                <Button
+                  size="lg"
+                  variant="outline"
+                  className="btn-magnetic inline-flex items-center gap-2 px-8 py-6 rounded-xl border-gray-200 text-[#1f1f1f] hover:bg-gray-100"
+                  onClick={onShowConfig}
+                >
+                  <Settings className="w-5 h-5" />
+                  系统配置
+                </Button>
+              </>
             )}
           </div>
 
           {/* Stats preview */}
-          <div 
-            className="mt-16 grid grid-cols-2 md:grid-cols-4 gap-6 max-w-3xl mx-auto animate-fade-in"
-            style={{ animationDelay: '1400ms' }}
+          <div
+            className={`mt-16 grid grid-cols-2 md:grid-cols-4 gap-6 max-w-3xl mx-auto ${fadeIntroClass()}`}
+            style={playIntro.current && !postLoginEnter.current ? { animationDelay: '1400ms' } : undefined}
           >
             {[
               { value: stats.projectCount, label: '历史项目数', icon: FolderOpen },
               { value: stats.quality, label: '最近自动质量', icon: Target },
-              { value: stats.factRate, label: '最近事实核验', icon: CheckCircle },
+              { value: stats.sourceCov, label: '最近引用覆盖', icon: CheckCircle },
               { value: stats.slideCount, label: '最近项目页数', icon: Layers },
             ].map((stat, index) => (
               <div key={index} className="text-center">

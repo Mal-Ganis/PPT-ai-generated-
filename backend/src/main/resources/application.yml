@@ -42,6 +42,9 @@ app:
 deepseek:
   api-key: ${DEEPSEEK_API_KEY:sk-846487c4b0854f4cbb0c9c314fa1c0c2}
 
+llm:
+  base-url: ${LLM_BASE_URL:https://api.deepseek.com}
+
 tavily:
   api-key: ${TAVILY_API_KEY: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}
   # basic | advanced | fast | ultra-fast — advanced 召回更稳，适合中文主题验收
@@ -82,3 +85,9 @@ generation:
   self-correction-tier1-fact-below: ${GENERATION_SC_T1_FACT:0.58}
   self-correction-tier2-auto-below: ${GENERATION_SC_T2_AUTO:70}
   self-correction-tier2-fact-below: ${GENERATION_SC_T2_FACT:0.48}
+
+# 评估与质量门禁（与正文自纠错 Tier 阈值独立）
+evaluation:
+  recommendation-max-tokens: ${EVAL_RECOMMENDATION_MAX_TOKENS:768}
+  quality-gate-pass-min: ${EVAL_QG_PASS_MIN:70}
+  quality-gate-warn-min: ${EVAL_QG_WARN_MIN:50}

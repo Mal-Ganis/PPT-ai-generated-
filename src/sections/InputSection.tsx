@@ -1,13 +1,17 @@
 import { useState, useRef, useEffect } from 'react';
-import { Type, FileUp, ArrowRight, Sparkles, Loader2, X, FileText, Clock } from 'lucide-react';
+import { Type, FileUp, ArrowRight, Sparkles, Loader2, X, FileText, Clock, UserCog, KeyRound } from 'lucide-react';
 import {
   PRESENTATION_DURATION_OPTIONS,
   DEFAULT_PRESENTATION_DURATION_MINUTES,
+  fetchLlmApiKeyPresets,
+  type LlmApiKeyPreset,
 } from '@/lib/backend';
+import { LLM_PROVIDER_TEMPLATES, selectionFromStored, type LlmApiKeyMode } from '@/lib/llmApiKey';
 import { FlowExitNav } from '@/components/FlowExitNav';
 import { WorkflowStepActions } from '@/components/WorkflowStepActions';
 import type { WorkflowProgress, WorkflowStep } from '@/lib/workflowSteps';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import * as mammoth from 'mammoth';
 
@@ -15,13 +19,29 @@ interface InputSectionProps {
   onSubmit: (
     type: 'topic' | 'document',
     content: string,
-    meta?: { fileName?: string; formData?: FormData; presentationDurationMinutes?: number },
+    meta?: {
+      fileName?: string;
+      formData?: FormData;
+      presentationDurationMinutes?: number;
+      presenterRole?: string;
+      llmApiKeyPresetId?: string | null;
+      llmApiKeyOverride?: string;
+      llmBaseUrlOverride?: string;
+      llmModelOverride?: string;
+    },
   ) => Promise<void>;
   workflowProgress: WorkflowProgress;
   onGoToStep: (step: WorkflowStep) => void;
   initialTopic?: string;
   initialInputType?: 'topic' | 'document';
   initialPresentationMinutes?: number;
+  initialPresenterRole?: string;
+  initialLlmApiKeyPresetId?: string | null;
+  initialLlmApiKeyOverride?: string;
+  initialLlmBaseUrlOverride?: string;
+  initialLlmModelOverride?: string;
+  /** 管理员/编辑者可自定义演示角色；只读用户不可进入此页 */
+  canCustomizeRole?: boolean;
 }
 
 const InputSection = ({
@@ -31,9 +51,16 @@ const InputSection = ({
   initialTopic,
   initialInputType,
   initialPresentationMinutes,
+  initialPresenterRole,
+  initialLlmApiKeyPresetId,
+  initialLlmApiKeyOverride,
+  initialLlmBaseUrlOverride,
+  initialLlmModelOverride,
+  canCustomizeRole = true,
 }: InputSectionProps) => {
   const [inputType, setInputType] = useState<'topic' | 'document'>('topic');
   const [topic, setTopic] = useState('');
+  const [presenterRole, setPresenterRole] = useState('');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [documentContent, setDocumentContent] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
@@ -41,13 +68,58 @@ const InputSection = ({
   const [presentationMinutes, setPresentationMinutes] = useState<number>(
     DEFAULT_PRESENTATION_DURATION_MINUTES,
   );
+  const [llmKeyMode, setLlmKeyMode] = useState<LlmApiKeyMode>('default');
+  const [selectedPresetId, setSelectedPresetId] = useState('');
+  const [customApiKey, setCustomApiKey] = useState('');
+  const [customBaseUrl, setCustomBaseUrl] = useState('');
+  const [customModel, setCustomModel] = useState('');
+  const [keyPresets, setKeyPresets] = useState<LlmApiKeyPreset[]>([]);
+  const [presetsLoading, setPresetsLoading] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (initialTopic != null) setTopic(initialTopic);
     if (initialInputType) setInputType(initialInputType);
     if (initialPresentationMinutes != null) setPresentationMinutes(initialPresentationMinutes);
-  }, [initialTopic, initialInputType, initialPresentationMinutes]);
+    if (initialPresenterRole != null) setPresenterRole(initialPresenterRole);
+  }, [initialTopic, initialInputType, initialPresentationMinutes, initialPresenterRole]);
+
+  useEffect(() => {
+    const stored = selectionFromStored(
+      initialLlmApiKeyPresetId,
+      initialLlmApiKeyOverride,
+      initialLlmBaseUrlOverride,
+      initialLlmModelOverride,
+    );
+    setLlmKeyMode(stored.mode);
+    setSelectedPresetId(stored.presetId ?? '');
+    setCustomApiKey(stored.override ?? '');
+    setCustomBaseUrl(stored.baseUrlOverride ?? '');
+    setCustomModel(stored.modelOverride ?? '');
+  }, [
+    initialLlmApiKeyPresetId,
+    initialLlmApiKeyOverride,
+    initialLlmBaseUrlOverride,
+    initialLlmModelOverride,
+  ]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadPresets = async () => {
+      try {
+        const list = await fetchLlmApiKeyPresets();
+        if (!cancelled) setKeyPresets(list);
+      } catch {
+        if (!cancelled) setKeyPresets([]);
+      } finally {
+        if (!cancelled) setPresetsLoading(false);
+      }
+    };
+    loadPresets();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -83,7 +155,32 @@ const InputSection = ({
     setStatusMessage('AI 正在全力工作，请稍候...');
 
     try {
-      const durationMeta = { presentationDurationMinutes: presentationMinutes };
+      const llmMeta =
+        llmKeyMode === 'preset' && selectedPresetId
+          ? {
+              llmApiKeyPresetId: selectedPresetId,
+              llmApiKeyOverride: undefined,
+              llmBaseUrlOverride: undefined,
+              llmModelOverride: undefined,
+            }
+          : llmKeyMode === 'custom' && customApiKey.trim()
+            ? {
+                llmApiKeyPresetId: null,
+                llmApiKeyOverride: customApiKey.trim(),
+                llmBaseUrlOverride: customBaseUrl.trim() || undefined,
+                llmModelOverride: customModel.trim() || undefined,
+              }
+            : {
+                llmApiKeyPresetId: null,
+                llmApiKeyOverride: undefined,
+                llmBaseUrlOverride: undefined,
+                llmModelOverride: undefined,
+              };
+      const durationMeta = {
+        presentationDurationMinutes: presentationMinutes,
+        presenterRole: canCustomizeRole ? presenterRole.trim() || undefined : undefined,
+        ...llmMeta,
+      };
       if (inputType === 'topic') {
         await onSubmit('topic', topic, durationMeta);
       } else if (uploadedFile) {
@@ -100,15 +197,24 @@ const InputSection = ({
   };
 
   const isValid =
-    inputType === 'topic'
+    (inputType === 'topic'
       ? topic.trim().length > 0
-      : uploadedFile !== null || documentContent.trim().length > 0;
+      : uploadedFile !== null || documentContent.trim().length > 0) &&
+    (llmKeyMode !== 'preset' || selectedPresetId !== '') &&
+    (llmKeyMode !== 'custom' || customApiKey.trim().length > 0);
 
   const exampleTopics = [
     '人工智能在教育领域的应用',
     '新能源汽车市场分析报告',
     '数字化转型战略规划',
     '产品发布会演示方案',
+  ];
+
+  const exampleRoles = [
+    '高校课程讲师',
+    '技术方案架构师',
+    '投融资分析师',
+    '科普讲解者',
   ];
 
   return (
@@ -191,6 +297,144 @@ const InputSection = ({
               ))}
             </div>
           </div>
+
+          <div className="bg-white rounded-2xl shadow-lg p-6 mb-8">
+            <div className="flex items-center gap-2 mb-3">
+              <KeyRound className="w-5 h-5 text-[#3898ec]" />
+              <span className="text-sm font-medium text-[#1f1f1f]">LLM API Key</span>
+            </div>
+            <p className="text-sm text-[#1f1f1f]/55 mb-4">
+              默认使用服务器配置的 LLM 接口与密钥；也可选择管理员预设（可绑定不同服务商），或仅本次生成使用自定义配置。
+            </p>
+            <div className="flex flex-wrap gap-2 mb-4">
+              {[
+                { mode: 'default' as const, label: '服务器默认' },
+                { mode: 'preset' as const, label: '管理员预设' },
+                { mode: 'custom' as const, label: '自定义输入' },
+              ].map(({ mode, label }) => (
+                <button
+                  key={mode}
+                  type="button"
+                  disabled={isLoading || (mode === 'preset' && !presetsLoading && keyPresets.length === 0)}
+                  onClick={() => setLlmKeyMode(mode)}
+                  className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                    llmKeyMode === mode
+                      ? 'bg-[#3898ec] text-white shadow-md'
+                      : 'bg-[#f3f3f3] text-[#1f1f1f]/70 hover:bg-[#3898ec]/10 hover:text-[#3898ec] disabled:opacity-40 disabled:cursor-not-allowed'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {llmKeyMode === 'default' && (
+              <p className="text-sm text-[#1f1f1f]/55">将使用系统配置中的默认接口地址、模型与环境变量密钥。</p>
+            )}
+            {llmKeyMode === 'preset' && (
+              <div className="space-y-2">
+                {presetsLoading ? (
+                  <p className="text-sm text-[#1f1f1f]/55">正在加载预设列表…</p>
+                ) : keyPresets.length === 0 ? (
+                  <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+                    暂无管理员预设，请联系管理员在「系统配置」中添加，或改用自定义输入。
+                  </p>
+                ) : (
+                  <select
+                    value={selectedPresetId}
+                    onChange={(e) => setSelectedPresetId(e.target.value)}
+                    disabled={isLoading}
+                    className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-[#3898ec] focus:ring-2 focus:ring-[#3898ec]/20"
+                  >
+                    <option value="">请选择预设</option>
+                    {keyPresets.map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.label}
+                        {preset.model ? ` · ${preset.model}` : ''}
+                        {preset.maskedKey ? ` (${preset.maskedKey})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            )}
+            {llmKeyMode === 'custom' && (
+              <div className="space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  {LLM_PROVIDER_TEMPLATES.map((tpl) => (
+                    <button
+                      key={tpl.id}
+                      type="button"
+                      onClick={() => {
+                        setCustomBaseUrl(tpl.baseUrl);
+                        setCustomModel(tpl.model);
+                      }}
+                      className="px-3 py-1.5 text-sm bg-[#f3f3f3] hover:bg-[#3898ec]/10 hover:text-[#3898ec] rounded-full transition-colors"
+                    >
+                      {tpl.label}
+                    </button>
+                  ))}
+                </div>
+                <Input
+                  type="password"
+                  value={customApiKey}
+                  onChange={(e) => setCustomApiKey(e.target.value)}
+                  placeholder="输入 LLM API Key"
+                  className="border-gray-200 focus-visible:ring-[#3898ec]/20"
+                  disabled={isLoading}
+                  autoComplete="off"
+                />
+                <Input
+                  value={customBaseUrl}
+                  onChange={(e) => setCustomBaseUrl(e.target.value)}
+                  placeholder="接口 Base URL（如 https://api.openai.com/v1）"
+                  className="border-gray-200 focus-visible:ring-[#3898ec]/20 font-mono text-sm"
+                  disabled={isLoading}
+                />
+                <Input
+                  value={customModel}
+                  onChange={(e) => setCustomModel(e.target.value)}
+                  placeholder="模型名称（如 gpt-4o-mini、deepseek-chat）"
+                  className="border-gray-200 focus-visible:ring-[#3898ec]/20 font-mono text-sm"
+                  disabled={isLoading}
+                />
+                <p className="text-xs text-[#1f1f1f]/45">
+                  自定义配置仅保存在当前浏览器会话，不会写入服务器数据库。
+                </p>
+              </div>
+            )}
+          </div>
+
+          {canCustomizeRole && (
+            <div className="bg-white rounded-2xl shadow-lg p-6 mb-8">
+              <div className="flex items-center gap-2 mb-3">
+                <UserCog className="w-5 h-5 text-[#3898ec]" />
+                <span className="text-sm font-medium text-[#1f1f1f]">演示角色（可选）</span>
+              </div>
+              <p className="text-sm text-[#1f1f1f]/55 mb-4">
+                留空时 AI 会根据主题或文档内容自动选择合适身份（如学术汇报、技术培训、产品发布等）。
+              </p>
+              <Input
+                value={presenterRole}
+                onChange={(e) => setPresenterRole(e.target.value.slice(0, 200))}
+                placeholder="例如：医学科普讲师、企业内部培训导师、论文答辩汇报人…"
+                className="border-gray-200 focus-visible:ring-[#3898ec]/20"
+                disabled={isLoading}
+              />
+              <div className="mt-3 flex flex-wrap gap-2">
+                {exampleRoles.map((role) => (
+                  <button
+                    key={role}
+                    type="button"
+                    onClick={() => setPresenterRole(role)}
+                    className="px-3 py-1.5 text-sm bg-[#f3f3f3] hover:bg-[#3898ec]/10 hover:text-[#3898ec] rounded-full transition-colors"
+                  >
+                    {role}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-2 text-xs text-[#1f1f1f]/45">{presenterRole.length} / 200 字</p>
+            </div>
+          )}
 
           {/* Input Area */}
           <div className="bg-white rounded-2xl shadow-lg p-6 lg:p-8 mb-8">

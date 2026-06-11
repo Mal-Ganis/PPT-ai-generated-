@@ -54,3 +54,13 @@ ALTER TABLE evaluation_reports ADD COLUMN IF NOT EXISTS auto_language_expression
 ALTER TABLE evaluation_reports ADD COLUMN IF NOT EXISTS auto_source_coverage_score INTEGER;
 ALTER TABLE evaluation_reports ADD COLUMN IF NOT EXISTS auto_total_score DOUBLE PRECISION;
 ALTER TABLE evaluation_reports ADD COLUMN IF NOT EXISTS fact_verification_rate DOUBLE PRECISION;
+ALTER TABLE evaluation_reports ADD COLUMN IF NOT EXISTS fact_check_details TEXT;
+ALTER TABLE evaluation_reports ADD COLUMN IF NOT EXISTS quality_gate_status VARCHAR(16);
+ALTER TABLE evaluation_reports ADD COLUMN IF NOT EXISTS quality_gate_reasons TEXT;
+ALTER TABLE evaluation_reports ADD COLUMN IF NOT EXISTS calibration_agree_with_auto BOOLEAN;
+ALTER TABLE evaluation_reports ADD COLUMN IF NOT EXISTS calibration_delta_json TEXT;
+
+-- 事实准确评估已停用，允许新报告不写人工事实分
+ALTER TABLE evaluation_reports ALTER COLUMN factual_accuracy_score DROP NOT NULL;
+
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS is_template BOOLEAN NOT NULL DEFAULT false;

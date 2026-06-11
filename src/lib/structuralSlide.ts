@@ -36,18 +36,20 @@ function isTableOfContents(title: string, chapter?: string): boolean {
 
 function isQaOrDiscussion(title: string, chapter?: string): boolean {
   if (matchesQa(title)) return true;
-  return chapter != null && matchesQa(chapter);
+  if (chapter != null && matchesQa(chapter)) return true;
+  return chapter?.trim() === '收尾';
 }
 
 function matchesQa(text: string): boolean {
   const t = text.trim();
   if (!t) return false;
   if (t.includes('问题与讨论') || t.includes('问答') || t.includes('答疑')) return true;
+  if (t.includes('提问') && (t.includes('交流') || t.includes('互动') || t.length <= 14)) return true;
   if (t.includes('讨论') && (t.includes('问题') || t.includes('交流') || t.includes('互动'))) {
     return true;
   }
   return (
-    /\bq\s*&?\s*a\b/i.test(t) ||
+    /\bq\s*[&＆]?\s*a\b/i.test(t) ||
     t.includes('Q&A') ||
     t.includes('Q＆A') ||
     /questions?\s*(and|&)\s*answers?|discussion/i.test(t)

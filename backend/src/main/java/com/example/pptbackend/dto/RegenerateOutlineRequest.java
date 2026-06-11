@@ -11,6 +11,12 @@ public class RegenerateOutlineRequest {
     /** topic | document，与正文生成一致 */
     private String inputType;
     private String inputContent;
+    /** 演示角色；传空字符串表示清除并改由 AI 推断 */
+    private String presenterRole;
+    private String llmApiKeyPresetId;
+    private String llmApiKeyOverride;
+    private String llmBaseUrlOverride;
+    private String llmModelOverride;
 
     public String getTopic() {
         return topic;
@@ -42,5 +48,45 @@ public class RegenerateOutlineRequest {
 
     public void setInputContent(String inputContent) {
         this.inputContent = inputContent;
+    }
+
+    public String getPresenterRole() {
+        return presenterRole;
+    }
+
+    public void setPresenterRole(String presenterRole) {
+        this.presenterRole = presenterRole;
+    }
+
+    public String getLlmApiKeyPresetId() {
+        return llmApiKeyPresetId;
+    }
+
+    public void setLlmApiKeyPresetId(String llmApiKeyPresetId) {
+        this.llmApiKeyPresetId = llmApiKeyPresetId;
+    }
+
+    public String getLlmApiKeyOverride() {
+        return llmApiKeyOverride;
+    }
+
+    public void setLlmApiKeyOverride(String llmApiKeyOverride) {
+        this.llmApiKeyOverride = llmApiKeyOverride;
+    }
+
+    public String getLlmBaseUrlOverride() {
+        return llmBaseUrlOverride;
+    }
+
+    public void setLlmBaseUrlOverride(String llmBaseUrlOverride) {
+        this.llmBaseUrlOverride = llmBaseUrlOverride;
+    }
+
+    public String getLlmModelOverride() {
+        return llmModelOverride;
+    }
+
+    public void setLlmModelOverride(String llmModelOverride) {
+        this.llmModelOverride = llmModelOverride;
     }
 }
